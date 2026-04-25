@@ -1,0 +1,1070 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:emergency_helper/src/core/logging/app_logger.dart';
+import 'package:emergency_helper/src/core/routing/route_paths.dart';
+import 'package:flutter/services.dart';
+import 'package:tencent_cloud_chat_push/common/tim_push_listener.dart';
+import 'package:tencent_cloud_chat_push/common/tim_push_message.dart';
+import 'package:tencent_cloud_chat_push/tencent_cloud_chat_push.dart';
+import 'package:tencent_cloud_chat_push/tencent_cloud_chat_push_platform_interface.dart';
+
+class PushService {
+  PushService({required AppLogger logger}) : _logger = logger;
+
+  final AppLogger _logger;
+  final TencentCloudChatPush _chatPush = TencentCloudChatPush();
+  final StreamController<PushOpenPayload> _openPayloadController =
+      StreamController<PushOpenPayload>.broadcast();
+  final StreamController<PushIncomingEvent> _incomingEventController =
+      StreamController<PushIncomingEvent>.broadcast();
+  TIMPushListener? _pushListener;
+  bool _pushListenerRegistered = false;
+
+  bool _initialized = false;
+  bool _available = false;
+  bool _registrationIdConfirmed = false;
+  String? _registrationId;
+  String? _boundAlias;
+  String? _queuedAlias;
+  String? _lastAliasBindCode;
+  String? _lastAliasBindMessage;
+  DateTime? _lastAliasBindTime;
+  PushOpenPayload? _pendingOpenPayload;
+  Future<void>? _ongoingNotifyImLoginTask;
+  int? _ongoingNotifyImLoginSdkAppId;
+  DateTime? _lastNotifyImLoginAt;
+  int? _lastNotifyImLoginSdkAppId;
+  static const Duration _notifyImLoginDedupWindow = Duration(seconds: 8);
+  static const List<Duration> _aliasBindRetryBackoffs = <Duration>[
+    Duration.zero,
+    Duration(seconds: 2),
+    Duration(seconds: 5),
+  ];
+
+  Stream<PushOpenPayload> get openPayloadStream =>
+      _openPayloadController.stream;
+  Stream<PushIncomingEvent> get incomingEventStream =>
+      _incomingEventController.stream;
+
+  String? get registrationId => _registrationId;
+  String? get boundAlias => _boundAlias;
+  String? get queuedAlias => _queuedAlias;
+  bool get isInitialized => _initialized;
+  String? get lastAliasBindCode => _lastAliasBindCode;
+  String? get lastAliasBindMessage => _lastAliasBindMessage;
+  DateTime? get lastAliasBindTime => _lastAliasBindTime;
+
+  bool get isAvailable => _available;
+
+  Future<String?> refreshRegistrationId() async {
+    // Don't override a confirmed RegistrationID. The native SDK's
+    // getRegistrationID() may return a short value (e.g., IM userId)
+    // before vendor push tokens arrive — we don't want to lose the real one.
+    if (_registrationIdConfirmed && _registrationId != null) {
+      _available = true;
+      await _retryQueuedAliasIfNeeded();
+      return _registrationId;
+    }
+    final fetched = (await _getRegistrationIdSafe())?.trim();
+    if (fetched != null && fetched.isNotEmpty) {
+      final keepCurrentConfirmedLongToken =
+          (_registrationIdConfirmed &&
+              (_registrationId ?? '').trim().isNotEmpty &&
+              _looksLikeVendorToken(_registrationId!.trim())) &&
+          !_looksLikeVendorToken(fetched);
+      if (!keepCurrentConfirmedLongToken) {
+        _registrationId = fetched;
+        _registrationIdConfirmed = _looksLikeVendorToken(fetched);
+      }
+      _available = true;
+      await _retryQueuedAliasIfNeeded();
+    }
+    return _registrationId;
+  }
+
+  Future<void> syncBadgeCount(int unreadCount) async {
+    // Badge is managed by the app UI; TIMPush does not expose a badge API.
+    _logger.info('sync badge count: $unreadCount');
+  }
+
+  Future<void> clearBadgeAndNotifications() async {
+    // App UI handles badge clearing; TIMPush handles internal notification state.
+    _logger.info('clear push badge');
+  }
+
+  PushDebugSnapshot getDebugSnapshot({String? userId}) {
+    return PushDebugSnapshot(
+      initialized: _initialized,
+      available: _available,
+      userId: userId,
+      registrationId: _registrationId,
+      boundAlias: _boundAlias,
+      queuedAlias: _queuedAlias,
+      lastAliasBindCode: _lastAliasBindCode,
+      lastAliasBindMessage: _lastAliasBindMessage,
+      lastAliasBindTime: _lastAliasBindTime,
+      production: false,
+      channel: 'tim-push',
+      appKey: 'N/A (uses timpush-configs.json)',
+    );
+  }
+
+  Future<void> initialize() async {
+    if (_initialized) {
+      return;
+    }
+    _initialized = true;
+
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      _logger.info('push init skipped: unsupported platform');
+      return;
+    }
+
+    try {
+      // Only register the notification click callback here — do NOT call
+      // registerPush() yet, because the IM SDK isn't logged in and
+      // registerPush would fail with "not logined" (errcode 800001).
+      // The actual push registration (registerPush) will happen after
+      // IM login via notifyIMLoggedIn().
+      final clickResult = await TencentCloudChatPushPlatform.instance
+          .registerOnNotificationClickedEvent(
+        onNotificationClicked: _onNotificationClicked,
+      );
+      _logger.info(
+        'push click callback registered, code=${clickResult.code}',
+      );
+      await _ensurePushListenerRegistered();
+
+      // Don't call getRegistrationID here — before IM login it may return
+      // the IM userId instead of the real vendor push token.
+      _logger.info('push initialized (awaiting IM login for registration)');
+    } on MissingPluginException catch (error, stackTrace) {
+      _recordAliasBindResult(
+        code: 'INIT_PLUGIN_MISSING',
+        message: error.message ?? error.toString(),
+      );
+      _logger.error(
+        'push init failed: missing plugin',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    } catch (error, stackTrace) {
+      _recordAliasBindResult(code: 'INIT_FAILED', message: error.toString());
+      _logger.error('push init failed', error: error, stackTrace: stackTrace);
+    }
+  }
+
+  /// Call this after the IM SDK (TUICallKit) has successfully logged in.
+  /// This registers push with the correct sdkAppId so the native TIMPush SDK
+  /// can properly report the vendor channel token to the Tencent IM server.
+  Future<void> notifyIMLoggedIn(int sdkAppId) async {
+    final running = _ongoingNotifyImLoginTask;
+    if (running != null && _ongoingNotifyImLoginSdkAppId == sdkAppId) {
+      await running;
+      return;
+    }
+    if (_lastNotifyImLoginSdkAppId == sdkAppId &&
+        _lastNotifyImLoginAt != null &&
+        DateTime.now().difference(_lastNotifyImLoginAt!) <
+            _notifyImLoginDedupWindow) {
+      _logger.info(
+        '[PUSH-DEBUG] notifyIMLoggedIn deduped for sdkAppId=$sdkAppId',
+      );
+      return;
+    }
+    final task = _notifyIMLoggedInInternal(sdkAppId);
+    _ongoingNotifyImLoginTask = task;
+    _ongoingNotifyImLoginSdkAppId = sdkAppId;
+    try {
+      await task;
+      _lastNotifyImLoginSdkAppId = sdkAppId;
+      _lastNotifyImLoginAt = DateTime.now();
+    } finally {
+      if (identical(_ongoingNotifyImLoginTask, task)) {
+        _ongoingNotifyImLoginTask = null;
+        _ongoingNotifyImLoginSdkAppId = null;
+      }
+    }
+  }
+
+  Future<void> _notifyIMLoggedInInternal(int sdkAppId) async {
+    _logger.info('[PUSH-DEBUG] notifyIMLoggedIn called with sdkAppId=$sdkAppId');
+    print('[PUSH-DEBUG] notifyIMLoggedIn called with sdkAppId=$sdkAppId');
+    if (!_initialized) {
+      _logger.error('notifyIMLoggedIn: push not yet initialized');
+      return;
+    }
+    if (sdkAppId <= 0) {
+      _logger.error('notifyIMLoggedIn: invalid sdkAppId=$sdkAppId');
+      return;
+    }
+    try {
+      final result = await _chatPush.registerPush(
+        sdkAppId: sdkAppId,
+        onNotificationClicked: _onNotificationClicked,
+      );
+      await _ensurePushListenerRegistered();
+      print('[PUSH-DEBUG] notifyIMLoggedIn registerPush result: code=${result.code}, data=${result.data}');
+      _logger.info(
+        'push re-registered after IM login, sdkAppId=$sdkAppId, '
+        'code=${result.code}, data=${result.data ?? "--"}',
+      );
+      if (result.code == 0) {
+        _available = true;
+      }
+
+      // Capture the RegistrationID directly from registerPush response.
+      // The response data IS the RegistrationID on success.
+      if (result.code == 0 && result.data != null && result.data!.isNotEmpty) {
+        _registrationId = result.data!.trim();
+        _available = true;
+        _registrationIdConfirmed = _looksLikeVendorToken(_registrationId!);
+        print('[PUSH-DEBUG] notifyIMLoggedIn captured registrationId from response: $_registrationId');
+      }
+
+      // TIMPush SDK only auto-registers Huawei+FCM vendor channels.
+      // On Honor devices (without HMS), we need to manually register
+      // the Honor push channel after the IM login completes.
+      if (await _isHonorDevice()) {
+        await _registerHonorPush();
+      }
+
+      // Vendor push tokens (Huawei/Honor) are obtained asynchronously.
+      // Wait and retry until we get a valid RegistrationID.
+      await _pollRegistrationId();
+
+      // If an alias was queued while push was unavailable, retry binding now.
+      await _retryQueuedAliasIfNeeded();
+    } catch (error, stackTrace) {
+      print('[PUSH-DEBUG] notifyIMLoggedIn error: $error, $stackTrace');
+      _logger.error(
+        'push re-register after IM login failed',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      // Still try Honor push and polling even if main registration failed.
+      if (await _isHonorDevice()) {
+        await _registerHonorPush();
+      }
+      await _pollRegistrationId();
+
+      // Retry queued alias even on partial recovery.
+      await _retryQueuedAliasIfNeeded();
+    }
+  }
+
+  /// Poll for a valid RegistrationID after vendor channels are registered.
+  /// Vendor tokens (Huawei/Honor) arrive asynchronously, so we need to wait.
+  /// A real vendor token is typically a long base64-like string (20+ chars),
+  /// whereas a userId is usually short (1-10 chars).
+  Future<void> _pollRegistrationId() async {
+    const maxRetries = 15;
+    const retryDelay = Duration(seconds: 2);
+    final originalRegId = (_registrationId ?? '').trim();
+    final originalLooksLikeVendor =
+        originalRegId.isNotEmpty && _looksLikeVendorToken(originalRegId);
+    String? latestFallbackRegId = originalRegId.isNotEmpty ? originalRegId : null;
+    for (var i = 0; i < maxRetries; i++) {
+      final regId = (await _getRegistrationIdSafe())?.trim();
+      print('[PUSH-DEBUG] pollRegistrationId attempt ${i + 1}/$maxRetries: $regId (current: ${_registrationId ?? "null"})');
+      if (regId != null && regId.isNotEmpty && _looksLikeVendorToken(regId)) {
+        _registrationId = regId;
+        _available = true;
+        _registrationIdConfirmed = true;
+        _logger.info('RegistrationID obtained after ${i + 1} polls: $regId');
+        return;
+      }
+      if ((latestFallbackRegId == null || latestFallbackRegId.isEmpty) &&
+          regId != null &&
+          regId.isNotEmpty) {
+        latestFallbackRegId = regId;
+      }
+      if (i < maxRetries - 1) {
+        await Future.delayed(retryDelay);
+      }
+    }
+    // If polling didn't yield a vendor token, keep whatever we had before
+    // (which might be from the registerPush response).
+    if (latestFallbackRegId != null && latestFallbackRegId.isNotEmpty) {
+      final shouldKeepOriginalVendor =
+          originalLooksLikeVendor &&
+          !_looksLikeVendorToken(latestFallbackRegId);
+      final resolvedRegId = shouldKeepOriginalVendor
+          ? originalRegId
+          : latestFallbackRegId;
+      _registrationId = resolvedRegId;
+      _available = true;
+      _registrationIdConfirmed = _looksLikeVendorToken(resolvedRegId);
+      _logger.info(
+        'Polling did not yield a vendor token, using fallback registrationId: $resolvedRegId',
+      );
+    } else {
+      _logger.info(
+        'Failed to obtain RegistrationID after $maxRetries polls. '
+        'Vendor push channel may not be fully registered.',
+      );
+    }
+    print('[PUSH-DEBUG] pollRegistrationId: final registrationId=$_registrationId');
+  }
+
+  /// Check if a token looks like a real vendor push token.
+  /// Vendor tokens are typically long base64-like strings (20+ chars),
+  /// whereas userId values are usually short numeric or alphanumeric strings.
+  bool _looksLikeVendorToken(String token) {
+    // A real vendor token should be at least 20 characters long
+    // and contain characters typical of base64 encoding.
+    return token.length >= 20;
+  }
+
+  /// Retry binding the queued alias once push becomes available again.
+  Future<void> _retryQueuedAliasIfNeeded() async {
+    final queued = _queuedAlias;
+    if (queued == null || queued.trim().isEmpty || !_available) {
+      return;
+    }
+    _logger.info('retrying queued alias after IM login: $queued');
+    await bindAlias(queued);
+  }
+
+  /// Check if the device brand is Honor (独立品牌).
+  /// After 2020, Honor separated from Huawei and uses a different push channel.
+  /// TIMPush SDK auto-registers Huawei push, but Honor needs manual trigger.
+  static Future<bool> _isHonorDevice() async {
+    if (!Platform.isAndroid) return false;
+    try {
+      const channel = MethodChannel('com.tianyanzhiyun/device_brand');
+      final brand = await channel.invokeMethod<String>('getDeviceBrand');
+      return brand?.toLowerCase() == 'honor';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Manually trigger Honor push registration via native method channel.
+  /// TIMPush SDK skips Honor channel entirely on Honor devices (uses
+  /// Huawei→FCM fallback instead), so we need this manual step.
+  Future<void> _registerHonorPush() async {
+    try {
+      const channel = MethodChannel('com.tianyanzhiyun/push_honor');
+      await channel.invokeMethod('registerHonorPush');
+      _logger.info('Honor push registration triggered');
+      // Give Honor push SDK time to register and get token, then refresh.
+      await Future.delayed(const Duration(seconds: 2));
+      _registrationId = await _getRegistrationIdSafe();
+      _logger.info(
+        'After Honor push registration, registrationId=${_registrationId ?? "--"}',
+      );
+    } catch (error, stackTrace) {
+      _logger.error(
+        'register Honor push failed',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  void _onNotificationClicked({
+    required String ext,
+    String? userID,
+    String? groupID,
+  }) {
+    _logger.info(
+      'push notification clicked: ext=$ext, userID=$userID, groupID=$groupID',
+    );
+    Map<String, dynamic> payload;
+    try {
+      if (ext.isNotEmpty) {
+        payload = jsonDecode(ext) as Map<String, dynamic>;
+      } else {
+        payload = {'userID': userID, 'groupID': groupID};
+      }
+    } catch (_) {
+      payload = {'ext': ext, 'userID': userID, 'groupID': groupID};
+    }
+    final openPayload = PushOpenPayload.fromEvent(payload);
+    if (_openPayloadController.hasListener) {
+      _pendingOpenPayload = null;
+      _openPayloadController.add(openPayload);
+    } else {
+      _pendingOpenPayload = openPayload;
+    }
+    _logger.info(
+      'push opened via notification click: '
+      'route=${openPayload.routePath}',
+    );
+  }
+
+  Future<void> _ensurePushListenerRegistered() async {
+    if (_pushListenerRegistered) {
+      return;
+    }
+    try {
+      final listener = TIMPushListener(
+        onRecvPushMessage: _onRecvPushMessage,
+        onRevokePushMessage: _onRevokePushMessage,
+      );
+      await _chatPush.addPushListener(listener: listener);
+      _pushListener = listener;
+      _pushListenerRegistered = true;
+      _logger.info('TIM push listener registered');
+    } catch (error, stackTrace) {
+      _logger.error(
+        'register TIM push listener failed',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  void _onRecvPushMessage(TimPushMessage message) {
+    final payload = <String, dynamic>{};
+    final title = _asText(message.title);
+    final desc = _asText(message.desc);
+    final ext = _asText(message.ext);
+    final messageId = _asText(message.messageID);
+    if (title != null) {
+      payload['title'] = title;
+    }
+    if (desc != null) {
+      payload['desc'] = desc;
+      payload['content'] = desc;
+      payload['message'] = desc;
+    }
+    if (ext != null) {
+      payload['ext'] = ext;
+    }
+    if (messageId != null) {
+      payload['messageID'] = messageId;
+    }
+    if (payload.isEmpty) {
+      return;
+    }
+    _emitIncomingEvent(PushIncomingEventSource.message, payload);
+  }
+
+  void _onRevokePushMessage(String messageId) {
+    final normalizedMessageId = messageId.trim();
+    if (normalizedMessageId.isEmpty) {
+      return;
+    }
+    _emitIncomingEvent(PushIncomingEventSource.notification, <String, dynamic>{
+      'messageID': normalizedMessageId,
+      'revoke': true,
+    });
+  }
+
+  void _emitIncomingEvent(
+    PushIncomingEventSource source,
+    Map<String, dynamic> payload,
+  ) {
+    if (_incomingEventController.isClosed) {
+      return;
+    }
+    _incomingEventController.add(
+      PushIncomingEvent(
+        source: source,
+        payload: Map<String, dynamic>.from(payload),
+        receivedAt: DateTime.now(),
+      ),
+    );
+  }
+
+  Future<void> bindAliasFromPermissionInfo(
+    Map<String, dynamic>? permissionInfo,
+  ) async {
+    final alias = extractAliasFromPermissionInfo(permissionInfo);
+    if (alias == null || alias.isEmpty) {
+      return;
+    }
+    await bindAlias(alias);
+  }
+
+  Future<void> bindAlias(String alias) async {
+    final normalizedAlias = alias.trim();
+    if (normalizedAlias.isEmpty) {
+      return;
+    }
+    if (!_available) {
+      final currentRegId = await _getRegistrationIdSafe();
+      if (currentRegId != null && currentRegId.trim().isNotEmpty) {
+        _registrationId = currentRegId.trim();
+        _available = true;
+      }
+    }
+    if (!_available) {
+      _queuedAlias = normalizedAlias;
+      _recordAliasBindResult(
+        code: 'PENDING',
+        message: 'Push not ready, alias queued: $normalizedAlias',
+      );
+      return;
+    }
+    if (_boundAlias == normalizedAlias) {
+      _recordAliasBindResult(
+        code: 'SKIP',
+        message: 'Alias already bound: $normalizedAlias',
+      );
+      return;
+    }
+    final outcome = await _bindAliasWithRetry(normalizedAlias);
+    if (outcome.success) {
+      _boundAlias = normalizedAlias;
+      _queuedAlias = null;
+      _recordAliasBindResult(code: outcome.code, message: outcome.message);
+      _logger.info('push alias bound: $normalizedAlias');
+      return;
+    }
+    _queuedAlias = normalizedAlias;
+    _recordAliasBindResult(code: outcome.code, message: outcome.message);
+    _logger.error(
+      'bind push alias failed: alias=$normalizedAlias, '
+      'code=${outcome.code}, message=${outcome.message}',
+    );
+  }
+
+  Future<void> unbindAlias() async {
+    _queuedAlias = null;
+    _boundAlias = null;
+    _available = false;
+    _registrationId = null;
+    _registrationIdConfirmed = false;
+    _recordAliasBindResult(code: 'UNBIND', message: 'Alias unbound');
+    _logger.info('push alias unbound (local state cleared)');
+  }
+
+  void _recordAliasBindResult({required String code, required String message}) {
+    _lastAliasBindCode = code;
+    _lastAliasBindMessage = message;
+    _lastAliasBindTime = DateTime.now();
+  }
+
+  PushOpenPayload? consumePendingOpenPayload() {
+    final payload = _pendingOpenPayload;
+    _pendingOpenPayload = null;
+    return payload;
+  }
+
+  static String? extractAliasFromPermissionInfo(Map<String, dynamic>? info) {
+    if (info == null || info.isEmpty) {
+      return null;
+    }
+
+    final permissionInfo = _asMap(info['permissionInfo']) ?? info;
+    final permissionData = _asMap(permissionInfo['data']) ?? permissionInfo;
+    final profileInfo =
+        _asMap(info['profileInfo']) ?? _asMap(permissionInfo['profileInfo']);
+    final profileData = _asMap(profileInfo?['data']) ?? profileInfo;
+
+    final candidates = <Map<String, dynamic>?>[
+      _asMap(permissionData['user']),
+      _asMap(permissionInfo['user']),
+      _asMap(info['user']),
+      _asMap(profileData?['user']),
+      profileData,
+      permissionData,
+      permissionInfo,
+      info,
+    ];
+
+    for (final candidate in candidates) {
+      if (candidate == null || candidate.isEmpty) {
+        continue;
+      }
+      final userId =
+          _asText(candidate['id']) ??
+          _asText(candidate['userId']) ??
+          _asText(candidate['uid']);
+      if (userId == null || userId.trim().isEmpty) {
+        continue;
+      }
+      return userId.trim();
+    }
+    return null;
+  }
+
+  Future<_AliasBindOutcome> _bindAliasWithRetry(String alias) async {
+    _AliasBindOutcome? lastOutcome;
+    final totalAttempts = _aliasBindRetryBackoffs.length;
+    for (var index = 0; index < totalAttempts; index++) {
+      final attempt = index + 1;
+      final backoff = _aliasBindRetryBackoffs[index];
+      if (backoff > Duration.zero) {
+        await Future<void>.delayed(backoff);
+      }
+      if ((_registrationId ?? '').trim().isEmpty) {
+        _registrationId = await _getRegistrationIdSafe();
+      }
+      final outcome = await _bindAliasOnce(alias);
+      if (outcome.success) {
+        if (attempt > 1) {
+          _logger.info(
+            'push alias bind recovered on retry '
+            '$attempt/$totalAttempts: $alias',
+          );
+        }
+        return outcome;
+      }
+      lastOutcome = outcome;
+      _logger.error(
+        'push alias bind attempt failed ($attempt/$totalAttempts): '
+        'alias=$alias, code=${outcome.code}, message=${outcome.message}',
+      );
+    }
+    return lastOutcome ??
+        const _AliasBindOutcome(
+          success: false,
+          code: 'BIND_FAILED',
+          message: 'Alias bind failed',
+        );
+  }
+
+  Future<_AliasBindOutcome> _bindAliasOnce(String alias) async {
+    // TIMPush manages device registration automatically upon login to IM SDK.
+    // "Binding alias" here is a no-op since TIMPush uses the IM SDK's user
+    // identity — the user is already identified via TUICallKit login.
+    return const _AliasBindOutcome(
+      success: true,
+      code: '0',
+      message: 'Alias already managed by TIMPush',
+    );
+  }
+
+  Future<String?> _getRegistrationIdSafe() async {
+    try {
+      final result = await TencentCloudChatPush().getRegistrationID();
+      if (result.code == 0 && result.data != null && result.data!.isNotEmpty) {
+        return result.data!.trim();
+      }
+      return null;
+    } catch (error, stackTrace) {
+      _logger.error(
+        'get registration id failed',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return null;
+    }
+  }
+
+  void dispose() {
+    final listener = _pushListener;
+    if (listener != null) {
+      unawaited(_chatPush.removePushListener(listener: listener));
+    }
+    _pushListener = null;
+    _pushListenerRegistered = false;
+    _openPayloadController.close();
+    _incomingEventController.close();
+  }
+}
+
+enum PushIncomingEventSource { notification, message }
+
+class _AliasBindOutcome {
+  const _AliasBindOutcome({
+    required this.success,
+    required this.code,
+    required this.message,
+  });
+
+  final bool success;
+  final String code;
+  final String message;
+}
+
+class PushIncomingEvent {
+  const PushIncomingEvent({
+    required this.source,
+    required this.payload,
+    required this.receivedAt,
+  });
+
+  final PushIncomingEventSource source;
+  final Map<String, dynamic> payload;
+  final DateTime receivedAt;
+}
+
+class PushOpenPayload {
+  const PushOpenPayload({
+    required this.routePath,
+    this.eventId,
+    this.page,
+    this.type,
+    required this.raw,
+  });
+
+  final String routePath;
+  final String? eventId;
+  final String? page;
+  final String? type;
+  final Map<String, dynamic> raw;
+
+  factory PushOpenPayload.fromEvent(Map<String, dynamic> event) {
+    final merged = _extractMergedPayload(event);
+    final rawRoute = _asText(merged['route']) ?? _asText(event['route']);
+    final eventId =
+        _asText(merged['eventId']) ??
+        _asText(merged['event_id']) ??
+        _asText(merged['bizId']) ??
+        _asText(merged['biz_id']);
+    final page =
+        _asText(merged['page']) ??
+        _asText(merged['targetPage']) ??
+        _asText(merged['target']) ??
+        _asText(merged['scene']);
+    final type = _asText(merged['type']) ?? _asText(merged['bizType']);
+
+    return PushOpenPayload(
+      routePath: _resolveRoute(
+        rawRoute: rawRoute,
+        eventId: eventId,
+        page: page,
+        type: type,
+        payload: merged,
+      ),
+      eventId: eventId,
+      page: page,
+      type: type,
+      raw: event,
+    );
+  }
+
+  static String _resolveRoute({
+    required String? rawRoute,
+    required String? eventId,
+    required String? page,
+    required String? type,
+    required Map<String, dynamic> payload,
+  }) {
+    final cleanedRoute = rawRoute?.trim();
+    if (cleanedRoute != null && cleanedRoute.isNotEmpty) {
+      final normalized = cleanedRoute.startsWith('/')
+          ? cleanedRoute
+          : '/$cleanedRoute';
+      return _normalizeLegacyTrtcRoute(normalized);
+    }
+
+    final pageKey = _normalizePageKey(page ?? type ?? '');
+    switch (pageKey) {
+      case 'event_detail':
+      case 'eventinfo':
+      case 'detail':
+      case 'info':
+        if (eventId != null && eventId.isNotEmpty) {
+          return RoutePaths.eventDetailById(eventId);
+        }
+        return RoutePaths.eventList;
+      case 'event_feedback':
+      case 'feedback':
+        if (eventId != null && eventId.isNotEmpty) {
+          return RoutePaths.eventFeedbackById(eventId);
+        }
+        return RoutePaths.eventList;
+      case 'event_timeline':
+      case 'event_dynamic':
+      case 'timeline':
+      case 'dynamic':
+        if (eventId != null && eventId.isNotEmpty) {
+          return RoutePaths.eventTimelineById(eventId);
+        }
+        return RoutePaths.eventList;
+      case 'event_list':
+      case 'list':
+        return RoutePaths.eventList;
+      case 'trtc_call':
+      case 'rtc_call':
+      case 'video_call':
+      case 'call_invite':
+      case 'trtc_invite':
+      case 'invite_call':
+        return _buildTrtcRoute(payload: payload);
+      case 'home':
+        return RoutePaths.home;
+      default:
+        if (eventId != null && eventId.isNotEmpty) {
+          return RoutePaths.eventDetailById(eventId);
+        }
+        return RoutePaths.home;
+    }
+  }
+
+  static String _normalizePageKey(String value) {
+    return value.trim().toLowerCase().replaceAll('-', '_').replaceAll(' ', '');
+  }
+
+  static String _normalizeLegacyTrtcRoute(String route) {
+    final normalized = route.trim();
+    if (normalized == RoutePaths.trtcCall) {
+      return RoutePaths.trtcCallNew;
+    }
+    final oldPrefix = '${RoutePaths.trtcCall}?';
+    if (normalized.startsWith(oldPrefix)) {
+      return normalized.replaceFirst(
+        RoutePaths.trtcCall,
+        RoutePaths.trtcCallNew,
+      );
+    }
+    return normalized;
+  }
+
+  static String _buildTrtcRoute({required Map<String, dynamic> payload}) {
+    String? asCsvText(Object? value) {
+      if (value is List) {
+        final values = value
+            .map(_asText)
+            .whereType<String>()
+            .map((item) => item.trim())
+            .where((item) => item.isNotEmpty)
+            .toList(growable: false);
+        if (values.isEmpty) {
+          return null;
+        }
+        return values.join(',');
+      }
+      if (value is Set) {
+        final values = value
+            .map(_asText)
+            .whereType<String>()
+            .map((item) => item.trim())
+            .where((item) => item.isNotEmpty)
+            .toList(growable: false);
+        if (values.isEmpty) {
+          return null;
+        }
+        return values.join(',');
+      }
+      return _asText(value);
+    }
+
+    String? pickText(List<String> keys) {
+      for (final key in keys) {
+        final value = asCsvText(payload[key]);
+        if (value != null && value.isNotEmpty) {
+          return value;
+        }
+      }
+      return null;
+    }
+
+    String? normalizeBool(String? raw, {required String fallback}) {
+      if (raw == null || raw.trim().isEmpty) {
+        return null;
+      }
+      final normalized = raw.trim().toLowerCase();
+      if (normalized == '1' ||
+          normalized == 'true' ||
+          normalized == 'yes' ||
+          normalized == 'y' ||
+          normalized == 'on') {
+        return '1';
+      }
+      if (normalized == '0' ||
+          normalized == 'false' ||
+          normalized == 'no' ||
+          normalized == 'n' ||
+          normalized == 'off') {
+        return '0';
+      }
+      return fallback;
+    }
+
+    final roomId = pickText(<String>[
+      'roomId',
+      'room_id',
+      'rtcRoomId',
+      'trtcRoomId',
+    ]);
+    final callId = pickText(<String>[
+      'callId',
+      'call_id',
+      'rtcCallId',
+      'trtcCallId',
+    ]);
+    final callerId = pickText(<String>[
+      'callerId',
+      'fromUserId',
+      'sponsorUserId',
+    ]);
+    final callerName = pickText(<String>[
+      'callerName',
+      'fromUserName',
+      'sponsorUserName',
+    ]);
+    final targetUserIds = pickText(<String>[
+      'calleeUserIds',
+      'targetUserIds',
+      'participantIds',
+      'inviteeIds',
+      'userIds',
+    ]);
+    final targetNames = pickText(<String>[
+      'calleeNames',
+      'targetUserNames',
+      'participantNames',
+    ]);
+    final routeQuery = <String, String>{};
+    if (callId != null && callId.isNotEmpty) {
+      routeQuery['callId'] = callId;
+    }
+    if (roomId != null && roomId.isNotEmpty) {
+      routeQuery['roomId'] = roomId;
+    }
+    if (callerId != null && callerId.isNotEmpty) {
+      routeQuery['callerId'] = callerId;
+    }
+    if (callerName != null && callerName.isNotEmpty) {
+      routeQuery['callerName'] = callerName;
+    }
+    if (targetUserIds != null && targetUserIds.isNotEmpty) {
+      routeQuery['calleeUserIds'] = targetUserIds;
+    }
+    if (targetNames != null && targetNames.isNotEmpty) {
+      routeQuery['calleeNames'] = targetNames;
+    }
+    final normalizedAutoJoin = normalizeBool(
+      pickText(<String>['autoJoin', 'autoEnter', 'joinDirectly']),
+      fallback: callId != null && callId.isNotEmpty ? '1' : '0',
+    );
+    if (normalizedAutoJoin != null && normalizedAutoJoin.isNotEmpty) {
+      routeQuery['autoJoin'] = normalizedAutoJoin;
+    }
+    if (routeQuery.isEmpty) {
+      return RoutePaths.trtcCallNew;
+    }
+    return Uri(
+      path: RoutePaths.trtcCallNew,
+      queryParameters: routeQuery,
+    ).toString();
+  }
+}
+
+class PushDebugSnapshot {
+  const PushDebugSnapshot({
+    required this.initialized,
+    required this.available,
+    required this.userId,
+    required this.registrationId,
+    required this.boundAlias,
+    required this.queuedAlias,
+    required this.lastAliasBindCode,
+    required this.lastAliasBindMessage,
+    required this.lastAliasBindTime,
+    required this.production,
+    required this.channel,
+    required this.appKey,
+  });
+
+  final bool initialized;
+  final bool available;
+  final String? userId;
+  final String? registrationId;
+  final String? boundAlias;
+  final String? queuedAlias;
+  final String? lastAliasBindCode;
+  final String? lastAliasBindMessage;
+  final DateTime? lastAliasBindTime;
+  final bool production;
+  final String channel;
+  final String appKey;
+}
+
+Map<String, dynamic> _extractMergedPayload(Map<String, dynamic> event) {
+  final merged = <String, dynamic>{};
+
+  void mergeMap(Object? value, {bool overwrite = true}) {
+    final map = _asMap(value);
+    if (map == null || map.isEmpty) {
+      return;
+    }
+    if (overwrite) {
+      merged.addAll(map);
+      return;
+    }
+    for (final entry in map.entries) {
+      merged.putIfAbsent(entry.key, () => entry.value);
+    }
+  }
+
+  mergeMap(event['extras']);
+  mergeMap(event['extra']);
+  mergeMap(event['data']);
+  // TIMPush ext field
+  final ext = _asText(event['ext']);
+  if (ext != null && ext.isNotEmpty) {
+    try {
+      final decoded = jsonDecode(ext);
+      if (decoded is Map) {
+        merged.addAll(decoded.map((k, v) => MapEntry(k.toString(), v)));
+      }
+    } catch (_) {}
+  }
+
+  // Some call invites carry business fields in nested json strings
+  // like userData/user_data instead of top-level ext keys.
+  const nestedKeys = <String>[
+    'userData',
+    'user_data',
+    'payload',
+    'data',
+    'extra',
+    'extras',
+    'customData',
+    'custom_data',
+    'extension',
+    'extensionInfo',
+  ];
+  for (var i = 0; i < 2; i++) {
+    for (final key in nestedKeys) {
+      mergeMap(merged[key], overwrite: false);
+    }
+  }
+
+  // Fallback: some SDK callbacks may expose userData beside ext.
+  mergeMap(event['userData'], overwrite: false);
+  mergeMap(event['user_data'], overwrite: false);
+
+  return merged;
+}
+
+Map<String, dynamic>? _asMap(Object? value) {
+  if (value == null) {
+    return null;
+  }
+  if (value is Map<String, dynamic>) {
+    return value;
+  }
+  if (value is Map) {
+    return value.map((key, data) => MapEntry(key.toString(), data));
+  }
+  if (value is String) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      return null;
+    }
+    try {
+      final decoded = jsonDecode(trimmed);
+      if (decoded is Map<String, dynamic>) {
+        return decoded;
+      }
+      if (decoded is Map) {
+        return decoded.map((key, data) => MapEntry(key.toString(), data));
+      }
+    } catch (_) {
+      return null;
+    }
+  }
+  return null;
+}
+
+String? _asText(Object? value) {
+  if (value == null) {
+    return null;
+  }
+  if (value is String) {
+    final trimmed = value.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
+  return value.toString().trim().isEmpty ? null : value.toString().trim();
+}

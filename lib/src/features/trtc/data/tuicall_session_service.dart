@@ -1,0 +1,577 @@
+import 'dart:async';
+
+import 'package:emergency_helper/src/core/di/app_dependencies.dart';
+import 'package:emergency_helper/src/core/errors/app_exception.dart';
+import 'package:emergency_helper/src/features/push/data/push_service.dart';
+import 'package:emergency_helper/src/features/trtc/data/trtc_service.dart';
+import 'package:flutter/services.dart';
+import 'package:tencent_calls_uikit/tencent_calls_uikit.dart';
+
+class TUICallSessionService {
+  TUICallSessionService._();
+
+  static final TUICallSessionService instance = TUICallSessionService._();
+  static const int _defaultRoomId = 100001;
+  static const MethodChannel _nativeLoginChannel = MethodChannel(
+    'com.tianyanzhiyun/tuicallkit_login',
+  );
+
+  final TrtcService _trtcService = const TrtcService();
+  Future<TUICallSessionState>? _ongoingEnsureTask;
+  Future<void> _nativeAuthTaskQueue = Future<void>.value();
+  String? _activeUserId;
+  int? _activeSdkAppId;
+  String? _activeUserSig;
+  DateTime? _activeUserSigFetchedAt;
+  static const Duration _activeSigReuseWindow = Duration(minutes: 30);
+
+  /// The sdkAppId of the currently active IM session, or null if not logged in.
+  int? get activeSdkAppId => _activeSdkAppId;
+
+  void clearLocalSessionState() {
+    _ongoingEnsureTask = null;
+    _activeUserId = null;
+    _activeSdkAppId = null;
+    _activeUserSig = null;
+    _activeUserSigFetchedAt = null;
+  }
+
+  Future<TUICallSessionState> ensureLoggedIn({
+    required AppDependencies dependencies,
+    int roomIdHint = _defaultRoomId,
+    bool forceRefreshSig = false,
+    String? userIdHint,
+  }) async {
+    final runningTask = _ongoingEnsureTask;
+    if (runningTask != null) {
+      return runningTask;
+    }
+    final task = _ensureLoggedInInternal(
+      dependencies: dependencies,
+      roomIdHint: roomIdHint,
+      forceRefreshSig: forceRefreshSig,
+      userIdHint: userIdHint,
+    );
+    _ongoingEnsureTask = task;
+    try {
+      return await task;
+    } finally {
+      if (identical(_ongoingEnsureTask, task)) {
+        _ongoingEnsureTask = null;
+      }
+    }
+  }
+
+  Future<TUICallSessionState> _ensureLoggedInInternal({
+    required AppDependencies dependencies,
+    required int roomIdHint,
+    required bool forceRefreshSig,
+    String? userIdHint,
+  }) async {
+    String? currentUserId;
+
+    // Try 1: userIdHint provided directly
+    if (userIdHint != null && userIdHint.isNotEmpty) {
+      currentUserId = userIdHint.trim();
+      print('[PUSH-DEBUG] using userIdHint: $currentUserId');
+    }
+
+    // Try 2: extract from permission info
+    if (currentUserId == null || currentUserId.isEmpty) {
+      Map<String, dynamic>? sessionInfo = await dependencies.authService
+          .getCachedPermissionInfo();
+      sessionInfo ??= await dependencies.authService
+          .fetchPermissionInfoAndCache();
+      currentUserId = _trtcService.extractCurrentUserId(sessionInfo)?.trim();
+      print('[PUSH-DEBUG] extractCurrentUserId result: $currentUserId');
+    }
+
+    // Try 3: fallback to auth-based extraction
+    if (currentUserId == null || currentUserId.isEmpty) {
+      print('[PUSH-DEBUG] falling back to _tryGetUserIdFromAuth');
+      currentUserId = await _tryGetUserIdFromAuth(dependencies: dependencies);
+      print('[PUSH-DEBUG] fallbackUserId: $currentUserId');
+    }
+
+    if (currentUserId == null || currentUserId.isEmpty) {
+      return const TUICallSessionState.failure('未获取到当前登录用户ID');
+    }
+
+    return _loginWithUserId(
+      dependencies: dependencies,
+      userId: currentUserId,
+      roomIdHint: roomIdHint,
+      forceRefreshSig: forceRefreshSig,
+    );
+  }
+
+  Future<TUICallSessionState> _loginWithUserId({
+    required AppDependencies dependencies,
+    required String userId,
+    required int roomIdHint,
+    required bool forceRefreshSig,
+  }) async {
+    final currentUserId = userId;
+    final nickname =
+        _extractNickname(
+          await dependencies.authService.getCachedPermissionInfo(),
+        ) ??
+        currentUserId;
+    final avatar =
+        _extractAvatar(
+          await dependencies.authService.getCachedPermissionInfo(),
+        ) ??
+        '';
+    final roomId = roomIdHint > 0 ? roomIdHint : _defaultRoomId;
+
+    TrtcUserSigInfo userSigInfo;
+    var canReuseActiveSig =
+        !forceRefreshSig &&
+        _activeUserId == currentUserId &&
+        (_activeUserSig?.isNotEmpty ?? false) &&
+        (_activeSdkAppId ?? 0) > 0 &&
+        _isWithinReuseWindow(_activeUserSigFetchedAt);
+
+    if (canReuseActiveSig) {
+      try {
+        final valid = await _trtcService.verifyUserSig(
+          dependencies.apiClient,
+          userId: currentUserId,
+          userSig: _activeUserSig!,
+          logger: dependencies.logger,
+        );
+        if (!valid) {
+          dependencies.logger.info(
+            'cached userSig invalid, fallback to fetching a new one',
+          );
+          canReuseActiveSig = false;
+        }
+      } catch (error, stackTrace) {
+        dependencies.logger.error(
+          'verify cached userSig failed, fallback to refresh',
+          error: error,
+          stackTrace: stackTrace,
+        );
+        canReuseActiveSig = false;
+      }
+    }
+
+    if (canReuseActiveSig) {
+      userSigInfo = TrtcUserSigInfo(
+        sdkAppId: _activeSdkAppId!,
+        userId: currentUserId,
+        userSig: _activeUserSig!,
+        roomId: roomId,
+      );
+    } else {
+      try {
+        userSigInfo = await _trtcService.getUserSig(
+          dependencies.apiClient,
+          userId: currentUserId,
+          roomId: roomId,
+          logger: dependencies.logger,
+        );
+      } on AppException catch (error) {
+        return TUICallSessionState.failure(error.message);
+      } catch (error) {
+        return TUICallSessionState.failure('获取音视频签名失败: $error');
+      }
+    }
+
+    if (userSigInfo.sdkAppId <= 0 || userSigInfo.userSig.trim().isEmpty) {
+      return const TUICallSessionState.failure('音视频签名数据无效');
+    }
+
+    try {
+      if (_activeUserId != null && _activeUserId != currentUserId) {
+        try {
+          await TUICallKit.instance.logout().timeout(
+            const Duration(seconds: 4),
+          );
+        } catch (_) {
+          // Ignore logout failures when SDK state is already cleared.
+        }
+        try {
+          await _invokeNativeMethod<Map<dynamic, dynamic>>(
+            method: 'nativeLogout',
+            timeout: const Duration(seconds: 4),
+          );
+        } catch (_) {
+          // Non-blocking.
+        }
+        _activeUserId = null;
+        _activeSdkAppId = null;
+        _activeUserSig = null;
+        _activeUserSigFetchedAt = null;
+      }
+
+      final callKitLoginResult = await TUICallKit.instance
+          .login(userSigInfo.sdkAppId, userSigInfo.userId, userSigInfo.userSig)
+          .timeout(const Duration(seconds: 15));
+
+      final callKitReady =
+          callKitLoginResult.isSuccess ||
+          _looksAlreadyLoggedIn(
+            callKitLoginResult.errorCode,
+            callKitLoginResult.errorMessage,
+          );
+      if (!callKitReady) {
+        return TUICallSessionState.failure(
+          '音视频登录失败: ${callKitLoginResult.errorMessage ?? "未知错误"}',
+        );
+      }
+
+      // Keep native IM login in sync for push registration and vendor channels.
+      try {
+        final loginResult = await _invokeNativeMethod<Map<dynamic, dynamic>>(
+          method: 'nativeLogin',
+          arguments: <String, dynamic>{
+            'sdkAppId': userSigInfo.sdkAppId,
+            'userId': userSigInfo.userId,
+            'userSig': userSigInfo.userSig,
+          },
+          timeout: const Duration(seconds: 8),
+        );
+
+        final nativeCode = _asInt(loginResult?['errorCode']);
+        final nativeMsg = loginResult?['errorMessage'] as String?;
+        final nativeSuccess =
+            loginResult?['success'] == true ||
+            _looksAlreadyLoggedIn(nativeCode, nativeMsg);
+        if (!nativeSuccess) {
+          dependencies.logger.error(
+            'native IM login failed (non-blocking): '
+            'code=$nativeCode, msg=$nativeMsg',
+          );
+        }
+      } catch (error, stackTrace) {
+        dependencies.logger.error(
+          'native IM login threw (non-blocking)',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+
+      _activeUserId = currentUserId;
+      _activeSdkAppId = userSigInfo.sdkAppId;
+      _activeUserSig = userSigInfo.userSig;
+      _activeUserSigFetchedAt = DateTime.now();
+
+      final selfInfoReady = await _setSelfInfoWithRetry(
+        dependencies: dependencies,
+        nickname: nickname,
+        avatar: avatar,
+      );
+      if (!selfInfoReady) {
+        return const TUICallSessionState.failure('音视频用户资料初始化失败，请稍后重试');
+      }
+
+      try {
+        await TUICallKit.instance.enableFloatWindow(true);
+      } catch (error, stackTrace) {
+        dependencies.logger.error(
+          'enableFloatWindow threw',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+
+      try {
+        TUICallKit.instance.enableIncomingBanner(true);
+      } catch (error, stackTrace) {
+        dependencies.logger.error(
+          'enableIncomingBanner threw',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+
+      unawaited(
+        _notifyPushRegistrationInBackground(
+          dependencies: dependencies,
+          sdkAppId: userSigInfo.sdkAppId,
+        ),
+      );
+
+      return TUICallSessionState.success(
+        userId: currentUserId,
+        nickname: nickname,
+      );
+    } on TimeoutException catch (error) {
+      _activeUserId = null;
+      _activeSdkAppId = null;
+      _activeUserSig = null;
+      _activeUserSigFetchedAt = null;
+      return TUICallSessionState.failure('音视频登录超时: ${error.message}');
+    } catch (error) {
+      _activeUserId = null;
+      _activeSdkAppId = null;
+      _activeUserSig = null;
+      _activeUserSigFetchedAt = null;
+      return TUICallSessionState.failure('音视频初始化失败: $error');
+    }
+  }
+
+  Future<void> logoutSilently({AppDependencies? dependencies}) async {
+    try {
+      await TUICallKit.instance.logout().timeout(const Duration(seconds: 4));
+    } catch (error) {
+      // Ignore logout failures when SDK state is already cleared.
+    }
+    try {
+      await _invokeNativeMethod<Map<dynamic, dynamic>>(
+        method: 'nativeLogout',
+        timeout: const Duration(seconds: 4),
+      );
+      print('[PUSH-DEBUG] nativeLogout success');
+    } catch (e) {
+      dependencies?.logger.error('nativeLogout failed', error: e);
+    } finally {
+      clearLocalSessionState();
+    }
+  }
+
+  Future<T?> _invokeNativeMethod<T>({
+    required String method,
+    Map<String, dynamic>? arguments,
+    Duration timeout = const Duration(seconds: 6),
+  }) {
+    final completer = Completer<T?>();
+    _nativeAuthTaskQueue = _nativeAuthTaskQueue.catchError((_) {}).then((
+      _,
+    ) async {
+      try {
+        final result = await _nativeLoginChannel
+            .invokeMethod<T>(method, arguments)
+            .timeout(timeout);
+        completer.complete(result);
+      } catch (error, stackTrace) {
+        completer.completeError(error, stackTrace);
+      }
+    });
+    return completer.future;
+  }
+
+  bool _isWithinReuseWindow(DateTime? fetchedAt) {
+    if (fetchedAt == null) {
+      return false;
+    }
+    return DateTime.now().difference(fetchedAt) <= _activeSigReuseWindow;
+  }
+
+  Future<void> _notifyPushRegistrationInBackground({
+    required AppDependencies dependencies,
+    required int sdkAppId,
+  }) async {
+    if (sdkAppId <= 0) {
+      return;
+    }
+    try {
+      await dependencies.pushService
+          .notifyIMLoggedIn(sdkAppId)
+          .timeout(const Duration(seconds: 12));
+    } catch (error, stackTrace) {
+      dependencies.logger.error(
+        'notifyIMLoggedIn after TUICall login failed (non-blocking)',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  Future<bool> _setSelfInfoWithRetry({
+    required AppDependencies dependencies,
+    required String nickname,
+    required String avatar,
+  }) async {
+    const maxAttempts = 5;
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        final selfInfoResult = await TUICallKit.instance.setSelfInfo(
+          nickname,
+          avatar,
+        );
+        if (selfInfoResult.isSuccess) {
+          return true;
+        }
+        dependencies.logger.error(
+          'set TUICall self info failed: '
+          'attempt=$attempt/$maxAttempts, '
+          'code=${selfInfoResult.errorCode}, '
+          'message=${selfInfoResult.errorMessage}',
+        );
+      } catch (error, stackTrace) {
+        dependencies.logger.error(
+          'set TUICall self info threw: '
+          'attempt=$attempt/$maxAttempts',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+      if (attempt < maxAttempts) {
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      }
+    }
+    return false;
+  }
+
+  Future<String?> _tryGetUserIdFromAuth({
+    required AppDependencies dependencies,
+  }) async {
+    try {
+      final token = await dependencies.authLocalStore.getAccessToken();
+      print(
+        '[PUSH-DEBUG] _tryGetUserIdFromAuth: token=${token != null && token.isNotEmpty ? "present" : "null"}',
+      );
+      if (token != null && token.isNotEmpty) {
+        final info = await dependencies.authService
+            .fetchPermissionInfoAndCache();
+        final id = _trtcService.extractCurrentUserId(info);
+        print(
+          '[PUSH-DEBUG] _tryGetUserIdFromAuth: extractCurrentUserId(info)=$id',
+        );
+        if (id != null && id.isNotEmpty) {
+          return id;
+        }
+        final permissionInfo = await dependencies.authService
+            .getCachedPermissionInfo();
+        final alias = PushService.extractAliasFromPermissionInfo(
+          permissionInfo,
+        );
+        print(
+          '[PUSH-DEBUG] _tryGetUserIdFromAuth: extractAliasFromPermissionInfo=$alias',
+        );
+        return alias;
+      }
+    } catch (e, st) {
+      print('[PUSH-DEBUG] _tryGetUserIdFromAuth: exception: $e');
+      print('[PUSH-DEBUG] stack: $st');
+    }
+    return null;
+  }
+
+  String? _extractNickname(Map<String, dynamic>? sessionInfo) {
+    if (sessionInfo == null || sessionInfo.isEmpty) {
+      return null;
+    }
+    final permissionInfo = _asMap(sessionInfo['permissionInfo']) ?? sessionInfo;
+    final permissionData = _asMap(permissionInfo['data']) ?? permissionInfo;
+    final profileInfo = _asMap(sessionInfo['profileInfo']);
+    final profileData = _asMap(profileInfo?['data']) ?? profileInfo;
+
+    return _pickFirstText(<Object?>[
+      _asMap(permissionData['user'])?['nickname'],
+      _asMap(permissionData['user'])?['name'],
+      _asMap(permissionData['user'])?['realName'],
+      permissionData['nickname'],
+      permissionData['name'],
+      permissionData['realName'],
+      _asMap(profileData?['user'])?['nickname'],
+      _asMap(profileData?['user'])?['name'],
+      profileData?['nickname'],
+      profileData?['name'],
+      profileData?['realName'],
+    ]);
+  }
+
+  String? _extractAvatar(Map<String, dynamic>? sessionInfo) {
+    if (sessionInfo == null || sessionInfo.isEmpty) {
+      return null;
+    }
+    final permissionInfo = _asMap(sessionInfo['permissionInfo']) ?? sessionInfo;
+    final permissionData = _asMap(permissionInfo['data']) ?? permissionInfo;
+    final profileInfo = _asMap(sessionInfo['profileInfo']);
+    final profileData = _asMap(profileInfo?['data']) ?? profileInfo;
+    return _pickFirstText(<Object?>[
+      _asMap(permissionData['user'])?['avatar'],
+      _asMap(permissionData['user'])?['avatarUrl'],
+      _asMap(permissionData['user'])?['avatarURL'],
+      permissionData['avatar'],
+      permissionData['avatarUrl'],
+      permissionData['avatarURL'],
+      _asMap(profileData?['user'])?['avatar'],
+      _asMap(profileData?['user'])?['avatarUrl'],
+      _asMap(profileData?['user'])?['avatarURL'],
+      profileData?['avatar'],
+      profileData?['avatarUrl'],
+      profileData?['avatarURL'],
+    ]);
+  }
+
+  String? _pickFirstText(List<Object?> candidates) {
+    for (final candidate in candidates) {
+      final text = _asText(candidate);
+      if (text != null) {
+        return text;
+      }
+    }
+    return null;
+  }
+
+  bool _looksAlreadyLoggedIn(int? code, String? message) {
+    final normalized = (message ?? '').toLowerCase();
+    final byCode = code == 6013 || code == 6208 || code == 6206;
+    final byText =
+        normalized.contains('already login') ||
+        normalized.contains('already logged') ||
+        normalized.contains('has login') ||
+        normalized.contains('repeated login');
+    return byCode || byText;
+  }
+
+  int? _asInt(Object? value) {
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    if (value is String) {
+      return int.tryParse(value.trim());
+    }
+    return null;
+  }
+
+  Map<String, dynamic>? _asMap(Object? value) {
+    if (value is Map<String, dynamic>) {
+      return value;
+    }
+    if (value is Map) {
+      return value.map((key, data) => MapEntry(key.toString(), data));
+    }
+    return null;
+  }
+
+  String? _asText(Object? value) {
+    if (value == null) {
+      return null;
+    }
+    final text = value.toString().trim();
+    if (text.isEmpty || text == 'null') {
+      return null;
+    }
+    return text;
+  }
+}
+
+class TUICallSessionState {
+  const TUICallSessionState._({
+    required this.success,
+    required this.message,
+    this.userId,
+    this.nickname,
+  });
+
+  const TUICallSessionState.success({
+    required String userId,
+    required String nickname,
+  }) : this._(success: true, message: '', userId: userId, nickname: nickname);
+
+  const TUICallSessionState.failure(String message)
+    : this._(success: false, message: message);
+
+  final bool success;
+  final String message;
+  final String? userId;
+  final String? nickname;
+}

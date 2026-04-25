@@ -1,0 +1,33 @@
+﻿<?xml version="1.0" encoding="UTF-8"?>
+<svg id="_鍥惧眰_2" data-name="鍥惧眰 2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44">
+  <defs>
+    <style>
+      .cls-1 {
+        fill: #67baff;
+      }
+
+      .cls-1, .cls-2 {
+        stroke-width: 0px;
+      }
+
+      .cls-3 {
+        fill: none;
+        stroke: #fff;
+        stroke-miterlimit: 10;
+        stroke-width: 2px;
+      }
+
+      .cls-2 {
+        fill: #fff;
+      }
+    </style>
+  </defs>
+  <g id="_浜嬩欢淇℃伅" data-name="浜嬩欢淇℃伅">
+    <rect fill="#67BAFF" x="0" y="0" width="44" height="44" rx="5" ry="5"/>
+    <path fill="none" stroke="#FFFFFF" stroke-width="2" stroke-miterlimit="10" d="m29,8H11c-1.65,0-3,1.35-3,3v22c0,1.65,1.35,3,3,3h22c1.65,0,3-1.35,3-3V15c-2.72-2.72-4.28-4.28-7-7Z"/>
+    <rect fill="#FFFFFF" x="14.5" y="17.83" width="15" height="2" rx=".5" ry=".5"/>
+    <rect fill="#FFFFFF" x="14.5" y="30" width="15" height="2" rx=".5" ry=".5"/>
+    <path fill="none" stroke="#FFFFFF" stroke-width="2" stroke-miterlimit="10" d="m27.78,8v4.25c0,1.64,1.33,2.97,2.97,2.97h5.25"/>
+    <rect fill="#FFFFFF" x="14.5" y="23.83" width="15" height="2" rx=".5" ry=".5"/>
+  </g>
+</svg>
