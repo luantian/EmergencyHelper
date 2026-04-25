@@ -62,7 +62,9 @@ class _MessageTabPageState extends State<MessageTabPage>
   bool get _hasUnread => _items.any((item) => !item.readStatus);
 
   @override
-  bool get wantKeepAlive => true;
+  bool get wantKeepAlive {
+    return true;
+  }
 
   @override
   void initState() {

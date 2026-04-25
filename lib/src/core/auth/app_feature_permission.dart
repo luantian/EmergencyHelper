@@ -31,7 +31,17 @@ class AppFeaturePermission {
   bool get isEmergencyBureau => scope == AppOrgScope.emergencyBureau;
   bool get isCommunity => scope == AppOrgScope.community;
 
-  bool get canMessageReceive => true;
+  bool get canMessageReceive {
+    return _hasAnyPermissionMatch(const <List<String>>[
+          <String>['notify', 'message'],
+          <String>['notify', 'read'],
+          <String>['message', 'list'],
+          <String>['message', 'read'],
+          <String>['notify-message', 'my-page'],
+        ]) ||
+        _hasDomainAdminPermission('notify') ||
+        _hasDomainAdminPermission('message');
+  }
 
   bool get canCommandIssue {
     return _hasAnyPermissionMatch(const <List<String>>[
@@ -50,8 +60,18 @@ class AppFeaturePermission {
           <String>['event', 'add'],
           <String>['event', 'submit'],
         ]) ||
-        _hasDomainAdminPermission('event') ||
-        true;
+        _hasDomainAdminPermission('event');
+  }
+
+  bool get canEventQuery {
+    return _hasAnyPermissionMatch(const <List<String>>[
+          <String>['event', 'list'],
+          <String>['event', 'page'],
+          <String>['event', 'query'],
+          <String>['event', 'detail'],
+          <String>['event', 'get'],
+        ]) ||
+        _hasDomainAdminPermission('event');
   }
 
   bool get canEventTransfer {
@@ -69,8 +89,7 @@ class AppFeaturePermission {
           <String>['event', 'feedback'],
           <String>['event', 'reply'],
         ]) ||
-        _hasDomainAdminPermission('event') ||
-        true;
+        _hasDomainAdminPermission('event');
   }
 
   bool get canEventClose {
@@ -90,8 +109,18 @@ class AppFeaturePermission {
           <String>['risk', 'add'],
           <String>['risk', 'submit'],
         ]) ||
-        _hasDomainAdminPermission('risk') ||
-        true;
+        _hasDomainAdminPermission('risk');
+  }
+
+  bool get canRiskQuery {
+    return _hasAnyPermissionMatch(const <List<String>>[
+          <String>['risk', 'list'],
+          <String>['risk', 'page'],
+          <String>['risk', 'query'],
+          <String>['risk', 'detail'],
+          <String>['risk', 'get'],
+        ]) ||
+        _hasDomainAdminPermission('risk');
   }
 
   bool get canRiskTransfer {
@@ -109,8 +138,7 @@ class AppFeaturePermission {
           <String>['risk', 'feedback'],
           <String>['risk', 'reply'],
         ]) ||
-        _hasDomainAdminPermission('risk') ||
-        true;
+        _hasDomainAdminPermission('risk');
   }
 
   bool get canRiskClose {
@@ -123,8 +151,43 @@ class AppFeaturePermission {
         isEmergencyBureau;
   }
 
-  bool get canContactsQuery => true;
-  bool get canContactsCall => true;
+  bool get canContactsQuery {
+    return _hasAnyPermissionMatch(const <List<String>>[
+          <String>['dept', 'list'],
+          <String>['dept', 'simple-list'],
+          <String>['user', 'list'],
+          <String>['user', 'simple-list'],
+          <String>['contact', 'list'],
+          <String>['contact', 'query'],
+        ]) ||
+        _hasDomainAdminPermission('dept') ||
+        _hasDomainAdminPermission('user') ||
+        _hasDomainAdminPermission('contact');
+  }
+
+  bool get canContactsCall {
+    return _hasAnyPermissionMatch(const <List<String>>[
+          <String>['contact', 'call'],
+          <String>['phone', 'call'],
+          <String>['tel', 'call'],
+          <String>['user', 'get'],
+        ]) ||
+        _hasDomainAdminPermission('contact') ||
+        _hasDomainAdminPermission('user');
+  }
+
+  bool get canKeyPointQuery {
+    return _hasAnyPermissionMatch(const <List<String>>[
+          <String>['emergency', 'place'],
+          <String>['place', 'list'],
+          <String>['place', 'page'],
+          <String>['place', 'query'],
+          <String>['point', 'list'],
+          <String>['point', 'query'],
+        ]) ||
+        _hasDomainAdminPermission('place') ||
+        _hasDomainAdminPermission('point');
+  }
 
   bool get canRtcConnect {
     return _hasAnyPermissionMatch(const <List<String>>[
@@ -216,18 +279,14 @@ class AppFeaturePermission {
     final permissionUser = _asMap(permissionData['user']) ?? permissionData;
     final permissionDept = _asMap(permissionUser['dept']);
 
-    final roleCodes = _extractStringSet(
-      <Object?>[
-        permissionData['roles'],
-        permissionUser['roles'],
-      ],
-    );
-    final permissionCodes = _extractStringSet(
-      <Object?>[
-        permissionData['permissions'],
-        permissionUser['permissions'],
-      ],
-    );
+    final roleCodes = _extractStringSet(<Object?>[
+      permissionData['roles'],
+      permissionUser['roles'],
+    ]);
+    final permissionCodes = _extractStringSet(<Object?>[
+      permissionData['permissions'],
+      permissionUser['permissions'],
+    ]);
 
     final deptType =
         _asText(permissionUser['deptType']) ??
@@ -315,7 +374,8 @@ class AppFeaturePermission {
       }
       for (final item in source) {
         if (item is Map) {
-          final name = _asText(item['code']) ??
+          final name =
+              _asText(item['code']) ??
               _asText(item['name']) ??
               _asText(item['roleCode']) ??
               _asText(item['roleName']) ??

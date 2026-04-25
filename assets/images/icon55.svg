@@ -1,5 +1,5 @@
-﻿<?xml version="1.0" encoding="UTF-8"?>
-<svg id="_鍥惧眰_2" data-name="鍥惧眰 2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44">
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44">
   <defs>
     <style>
       .cls-1 {
@@ -15,7 +15,7 @@
       }
     </style>
   </defs>
-  <g id="_閲嶇偣鐐逛綅" data-name="閲嶇偣鐐逛綅">
+  <g>
     <rect fill="#67BAFF" x="0" y="0" width="44" height="44" rx="5" ry="5"/>
     <circle fill="none" stroke="#FFFFFF" stroke-width="2" stroke-miterlimit="10" cx="22" cy="19.42" r="3.81"/>
     <path fill="none" stroke="#FFFFFF" stroke-width="2" stroke-miterlimit="10" d="m33.11,19.13c0-6.12-4.96-11.09-11.09-11.09s-11.09,4.96-11.09,11.09c0,3.14,1.44,5.59,3.32,7.99h0l6.6,7.98c.6.72,1.71.72,2.31,0l6.6-7.98h0c1.84-2.34,3.35-4.85,3.35-7.99Z"/>

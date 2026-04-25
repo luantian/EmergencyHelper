@@ -48,7 +48,8 @@ class _WorkbenchTabPageState extends State<WorkbenchTabPage> {
   Widget build(BuildContext context) {
     return FutureBuilder<AppFeaturePermission>(
       future: _permissionFuture,
-      builder: (context, _) {
+      builder: (context, snapshot) {
+        final permission = snapshot.data;
         return Scaffold(
           appBar: AppBar(
             backgroundColor: AppTheme.primaryBlue,
@@ -89,7 +90,7 @@ class _WorkbenchTabPageState extends State<WorkbenchTabPage> {
                   child: const _SummaryPanel(),
                 ),
                 const SizedBox(height: 12),
-                const _ActionGrid(),
+                _ActionGrid(permission: permission),
               ],
             ),
           ),
@@ -98,7 +99,6 @@ class _WorkbenchTabPageState extends State<WorkbenchTabPage> {
     );
   }
 }
-
 
 class _WeatherSummaryTile extends StatefulWidget {
   const _WeatherSummaryTile();
@@ -758,7 +758,8 @@ class _SummaryPanel extends StatefulWidget {
 }
 
 class _SummaryPanelState extends State<_SummaryPanel> {
-  static const WorkbenchStatisticsService _service = WorkbenchStatisticsService();
+  static const WorkbenchStatisticsService _service =
+      WorkbenchStatisticsService();
   late Future<WorkbenchStatistics> _future;
 
   @override
@@ -838,7 +839,10 @@ class _SummaryPanelState extends State<_SummaryPanel> {
                         ),
                       ),
                     ),
-                    TextButton(onPressed: _retry, child: const Text('\u91CD\u8BD5')),
+                    TextButton(
+                      onPressed: _retry,
+                      child: const Text('\u91CD\u8BD5'),
+                    ),
                   ],
                 ),
               ),
@@ -891,7 +895,9 @@ class _SummaryDivider extends StatelessWidget {
 }
 
 class _ActionGrid extends StatelessWidget {
-  const _ActionGrid();
+  const _ActionGrid({required this.permission});
+
+  final AppFeaturePermission? permission;
 
   static const List<_ActionItem> _items = <_ActionItem>[
     _ActionItem(
@@ -912,6 +918,30 @@ class _ActionGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final visibleItems = permission == null
+        ? _items
+        : _items
+              .where((item) => _isAllowed(permission!, item.type))
+              .toList(growable: false);
+    if (visibleItems.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFFD9DEE5)),
+        ),
+        child: const Text(
+          '\u6682\u65E0\u53EF\u8BBF\u95EE\u529F\u80FD',
+          style: TextStyle(
+            color: Color(0xFF7D8792),
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      );
+    }
+
     return LayoutBuilder(
       builder: (context, constraints) {
         const maxColumns = 4;
@@ -924,12 +954,12 @@ class _ActionGrid extends StatelessWidget {
         return Wrap(
           spacing: crossAxisSpacing,
           runSpacing: mainAxisSpacing,
-          children: _items
+          children: visibleItems
               .map(
                 (item) => SizedBox(
                   width: itemWidth,
                   height: 82,
-                  child: _ActionCard(item: item),
+                  child: _ActionCard(item: item, enabled: permission != null),
                 ),
               )
               .toList(),
@@ -937,33 +967,62 @@ class _ActionGrid extends StatelessWidget {
       },
     );
   }
+
+  bool _isAllowed(AppFeaturePermission permission, _ActionType type) {
+    switch (type) {
+      case _ActionType.eventReport:
+        return permission.canEventReport;
+      case _ActionType.eventInfo:
+        return permission.canEventQuery ||
+            permission.canEventReport ||
+            permission.canEventTransfer ||
+            permission.canEventFeedback ||
+            permission.canEventClose;
+      case _ActionType.riskReport:
+        return permission.canRiskReport;
+      case _ActionType.derivedRisk:
+        return permission.canRiskQuery ||
+            permission.canRiskReport ||
+            permission.canRiskTransfer ||
+            permission.canRiskFeedback ||
+            permission.canRiskClose;
+      case _ActionType.keyPoint:
+        return permission.canKeyPointQuery || permission.canDataVisualization;
+    }
+  }
 }
 
 class _ActionCard extends StatelessWidget {
-  const _ActionCard({required this.item});
+  const _ActionCard({required this.item, required this.enabled});
 
   final _ActionItem item;
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
       key: _keyByType(item.type),
       borderRadius: BorderRadius.circular(6),
-      onTap: () => _handleTap(context),
+      onTap: enabled ? () => _handleTap(context) : null,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: <Widget>[
-          _ActionIcon(type: item.type),
+          Opacity(
+            opacity: enabled ? 1 : 0.45,
+            child: _ActionIcon(type: item.type),
+          ),
           const SizedBox(height: 4),
           Text(
             item.label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: Color(0xFF636D78),
+            style: TextStyle(
+              color: enabled
+                  ? const Color(0xFF636D78)
+                  : const Color(0xFF9CA5B0),
               fontSize: 12,
               fontWeight: FontWeight.w500,
             ),

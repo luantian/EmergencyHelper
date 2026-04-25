@@ -131,12 +131,17 @@ class _MineTabPageState extends State<MineTabPage> {
           dependencies.authService.logout(),
           timeout: const Duration(seconds: 3),
         );
+        await _runWithTimeout(
+          TUICallSessionService.instance.logoutSilently(
+            dependencies: dependencies,
+          ),
+          timeout: const Duration(seconds: 5),
+        );
       }
       await dependencies.authLocalStore.clear();
       EventCenter.instance.resetSessionCache(notify: false);
       RiskCenter.instance.resetSessionData(notify: false);
       AppFeaturePermissionResolver.instance.clearCache();
-      TUICallSessionService.instance.clearLocalSessionState();
       // Push SDK operations may occasionally hang on some devices.
       // Run them in background and do not block UI logout.
       unawaited(_cleanupPushStateInBackground(dependencies));

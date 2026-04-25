@@ -350,23 +350,33 @@ class _LoginPageState extends State<LoginPage> {
     AppDependencies dependencies,
   ) async {
     try {
-      print('[PUSH-DEBUG] login: _ensureCallSessionInBackground started');
+      dependencies.logger.debug(
+        '[PUSH-DEBUG] login: _ensureCallSessionInBackground started',
+      );
       final result = await TUICallSessionService.instance.ensureLoggedIn(
         dependencies: dependencies,
       );
-      print(
-        '[PUSH-DEBUG] login: ensureLoggedIn result=${result.success}, sdkAppId=${TUICallSessionService.instance.activeSdkAppId}',
+      final sdkAppId = TUICallSessionService.instance.activeSdkAppId;
+      dependencies.logger.debug(
+        '[PUSH-DEBUG] login: ensureLoggedIn result=${result.success}, '
+        'hasSdkAppId=${sdkAppId != null && sdkAppId > 0}',
       );
       if (result.success) {
-        final sdkAppId = TUICallSessionService.instance.activeSdkAppId;
         if (sdkAppId != null && sdkAppId > 0) {
-          print('[PUSH-DEBUG] login: calling notifyIMLoggedIn($sdkAppId)');
+          dependencies.logger.debug(
+            '[PUSH-DEBUG] login: calling notifyIMLoggedIn',
+          );
           await dependencies.pushService.notifyIMLoggedIn(sdkAppId);
-          print('[PUSH-DEBUG] login: notifyIMLoggedIn completed');
+          dependencies.logger.debug(
+            '[PUSH-DEBUG] login: notifyIMLoggedIn completed',
+          );
         }
       }
     } catch (e) {
-      print('[PUSH-DEBUG] login: _ensureCallSessionInBackground error: $e');
+      dependencies.logger.error(
+        '[PUSH-DEBUG] login: _ensureCallSessionInBackground failed',
+        error: e,
+      );
     }
   }
 

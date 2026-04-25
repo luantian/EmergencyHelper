@@ -73,7 +73,9 @@ class TUICallSessionService {
     // Try 1: userIdHint provided directly
     if (userIdHint != null && userIdHint.isNotEmpty) {
       currentUserId = userIdHint.trim();
-      print('[PUSH-DEBUG] using userIdHint: $currentUserId');
+      dependencies.logger.debug(
+        '[PUSH-DEBUG] using userIdHint=${_maskSensitive(currentUserId)}',
+      );
     }
 
     // Try 2: extract from permission info
@@ -83,14 +85,21 @@ class TUICallSessionService {
       sessionInfo ??= await dependencies.authService
           .fetchPermissionInfoAndCache();
       currentUserId = _trtcService.extractCurrentUserId(sessionInfo)?.trim();
-      print('[PUSH-DEBUG] extractCurrentUserId result: $currentUserId');
+      dependencies.logger.debug(
+        '[PUSH-DEBUG] extractCurrentUserId result='
+        '${_maskSensitive(currentUserId)}',
+      );
     }
 
     // Try 3: fallback to auth-based extraction
     if (currentUserId == null || currentUserId.isEmpty) {
-      print('[PUSH-DEBUG] falling back to _tryGetUserIdFromAuth');
+      dependencies.logger.debug(
+        '[PUSH-DEBUG] falling back to _tryGetUserIdFromAuth',
+      );
       currentUserId = await _tryGetUserIdFromAuth(dependencies: dependencies);
-      print('[PUSH-DEBUG] fallbackUserId: $currentUserId');
+      dependencies.logger.debug(
+        '[PUSH-DEBUG] fallbackUserId=${_maskSensitive(currentUserId)}',
+      );
     }
 
     if (currentUserId == null || currentUserId.isEmpty) {
@@ -323,7 +332,7 @@ class TUICallSessionService {
         method: 'nativeLogout',
         timeout: const Duration(seconds: 4),
       );
-      print('[PUSH-DEBUG] nativeLogout success');
+      dependencies?.logger.debug('[PUSH-DEBUG] nativeLogout success');
     } catch (e) {
       dependencies?.logger.error('nativeLogout failed', error: e);
     } finally {
@@ -420,15 +429,16 @@ class TUICallSessionService {
   }) async {
     try {
       final token = await dependencies.authLocalStore.getAccessToken();
-      print(
+      dependencies.logger.debug(
         '[PUSH-DEBUG] _tryGetUserIdFromAuth: token=${token != null && token.isNotEmpty ? "present" : "null"}',
       );
       if (token != null && token.isNotEmpty) {
         final info = await dependencies.authService
             .fetchPermissionInfoAndCache();
         final id = _trtcService.extractCurrentUserId(info);
-        print(
-          '[PUSH-DEBUG] _tryGetUserIdFromAuth: extractCurrentUserId(info)=$id',
+        dependencies.logger.debug(
+          '[PUSH-DEBUG] _tryGetUserIdFromAuth: '
+          'extractCurrentUserId(info)=${_maskSensitive(id)}',
         );
         if (id != null && id.isNotEmpty) {
           return id;
@@ -438,16 +448,34 @@ class TUICallSessionService {
         final alias = PushService.extractAliasFromPermissionInfo(
           permissionInfo,
         );
-        print(
-          '[PUSH-DEBUG] _tryGetUserIdFromAuth: extractAliasFromPermissionInfo=$alias',
+        dependencies.logger.debug(
+          '[PUSH-DEBUG] _tryGetUserIdFromAuth: '
+          'extractAliasFromPermissionInfo=${_maskSensitive(alias)}',
         );
         return alias;
       }
     } catch (e, st) {
-      print('[PUSH-DEBUG] _tryGetUserIdFromAuth: exception: $e');
-      print('[PUSH-DEBUG] stack: $st');
+      dependencies.logger.error(
+        '[PUSH-DEBUG] _tryGetUserIdFromAuth failed',
+        error: e,
+        stackTrace: st,
+      );
     }
     return null;
+  }
+
+  String _maskSensitive(String? raw, {int keepPrefix = 2, int keepSuffix = 2}) {
+    final value = (raw ?? '').trim();
+    if (value.isEmpty) {
+      return '--';
+    }
+    final visibleThreshold = keepPrefix + keepSuffix + 2;
+    if (value.length <= visibleThreshold) {
+      return '***(${value.length})';
+    }
+    final prefix = value.substring(0, keepPrefix);
+    final suffix = value.substring(value.length - keepSuffix);
+    return '$prefix***$suffix(${value.length})';
   }
 
   String? _extractNickname(Map<String, dynamic>? sessionInfo) {

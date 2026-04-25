@@ -196,18 +196,85 @@ class EventCenter extends ChangeNotifier {
     final apiClient = _ensureApiClient();
     await _ensureEventTypeCacheLoaded(apiClient);
     await _ensureStreetDeptCacheLoaded(apiClient);
+    final normalizedKeyword = keyword.trim();
+    final safePageNo = pageNo <= 0 ? 1 : pageNo;
+    final safePageSize = pageSize <= 0 ? 50 : pageSize;
+    final statusCodes = status.apiCodes;
     final mappedById = <String, EventRecord>{};
     var receivedCount = 0;
     var hasMore = false;
 
-    for (final statusCode in status.apiCodes) {
+    // `processing` currently maps to multiple backend states (0/1).
+    // If we query each state with the same pageNo and then merge, pagination
+    // order can drift and cause duplicates/missing records across pages.
+    // Use cumulative merged pagination for multi-status tabs to keep ordering stable.
+    final useMergedPagination = statusCodes.length > 1;
+    if (useMergedPagination) {
+      final targetCount = safePageNo * safePageSize;
+      for (final statusCode in statusCodes) {
+        final response = await apiClient.getJson(
+          '/admin-api/api/event/report/page',
+          queryParameters: <String, dynamic>{
+            'pageNo': 1,
+            'pageSize': targetCount,
+            'status': statusCode,
+            if (normalizedKeyword.isNotEmpty) 'name': normalizedKeyword,
+          },
+        );
+        final data = _expectSuccessAndGetData(
+          response,
+          defaultErrorMessage:
+              '\u52A0\u8F7D\u4E8B\u4EF6\u5217\u8868\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5',
+        );
+        final dataMap = _asMap(data);
+        final list = _asMapList(dataMap?['list']);
+        receivedCount += list.length;
+        if (list.length >= targetCount) {
+          hasMore = true;
+        }
+        for (final item in list) {
+          final event = _eventFromMap(item);
+          if (event.status != status || event.id.trim().isEmpty) {
+            continue;
+          }
+          mappedById[event.id] = event;
+        }
+      }
+
+      final mapped = mappedById.values.toList()
+        ..sort((a, b) => b.reportTime.compareTo(a.reportTime));
+      final merged = mapped.take(targetCount).toList(growable: false);
+      final previousCount = (safePageNo - 1) * safePageSize;
+      final acceptedCount = merged.length > previousCount
+          ? merged.length - previousCount
+          : 0;
+      if (mapped.length > merged.length) {
+        hasMore = true;
+      }
+
+      _statusCache[status] = merged;
+      for (final event in merged) {
+        _eventById[event.id] = event;
+      }
+      _lastErrorMessage = null;
+      notifyListeners();
+      return EventPageLoadResult(
+        pageNo: safePageNo,
+        pageSize: safePageSize,
+        receivedCount: receivedCount,
+        acceptedCount: acceptedCount,
+        hasMore: hasMore,
+      );
+    }
+
+    for (final statusCode in statusCodes) {
       final response = await apiClient.getJson(
         '/admin-api/api/event/report/page',
         queryParameters: <String, dynamic>{
-          'pageNo': pageNo,
-          'pageSize': pageSize,
+          'pageNo': safePageNo,
+          'pageSize': safePageSize,
           'status': statusCode,
-          if (keyword.trim().isNotEmpty) 'name': keyword.trim(),
+          if (normalizedKeyword.isNotEmpty) 'name': normalizedKeyword,
         },
       );
       final data = _expectSuccessAndGetData(
@@ -218,7 +285,7 @@ class EventCenter extends ChangeNotifier {
       final dataMap = _asMap(data);
       final list = _asMapList(dataMap?['list']);
       receivedCount += list.length;
-      if (pageSize > 0 && list.length >= pageSize) {
+      if (list.length >= safePageSize) {
         hasMore = true;
       }
       for (final item in list) {
@@ -243,8 +310,8 @@ class EventCenter extends ChangeNotifier {
     _lastErrorMessage = null;
     notifyListeners();
     return EventPageLoadResult(
-      pageNo: pageNo,
-      pageSize: pageSize,
+      pageNo: safePageNo,
+      pageSize: safePageSize,
       receivedCount: receivedCount,
       acceptedCount: mapped.length,
       hasMore: hasMore,
@@ -1487,7 +1554,9 @@ class EventCenter extends ChangeNotifier {
       return;
     }
     try {
-      final response = await apiClient.getJson(AppConstants.dictDataSimpleListPath);
+      final response = await apiClient.getJson(
+        AppConstants.dictDataSimpleListPath,
+      );
       final code = _asInt(response['code']) ?? -1;
       if (code != 0) {
         return;
@@ -1524,7 +1593,9 @@ class EventCenter extends ChangeNotifier {
     return _eventTypeNameByValueCache[numeric.toString()];
   }
 
-  Future<List<Map<String, dynamic>>> _loadStreetDeptRows(ApiClient apiClient) async {
+  Future<List<Map<String, dynamic>>> _loadStreetDeptRows(
+    ApiClient apiClient,
+  ) async {
     final candidateTypes = <String>['street', 'jd', '1', '2', '3', '4'];
     final queries = <Map<String, dynamic>>[];
     final seenQueries = <String>{};

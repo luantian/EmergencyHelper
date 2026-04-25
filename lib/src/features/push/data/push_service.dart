@@ -130,11 +130,9 @@ class PushService {
       // IM login via notifyIMLoggedIn().
       final clickResult = await TencentCloudChatPushPlatform.instance
           .registerOnNotificationClickedEvent(
-        onNotificationClicked: _onNotificationClicked,
-      );
-      _logger.info(
-        'push click callback registered, code=${clickResult.code}',
-      );
+            onNotificationClicked: _onNotificationClicked,
+          );
+      _logger.info('push click callback registered, code=${clickResult.code}');
       await _ensurePushListenerRegistered();
 
       // Don't call getRegistrationID here — before IM login it may return
@@ -169,7 +167,7 @@ class PushService {
         _lastNotifyImLoginAt != null &&
         DateTime.now().difference(_lastNotifyImLoginAt!) <
             _notifyImLoginDedupWindow) {
-      _logger.info(
+      _logger.debug(
         '[PUSH-DEBUG] notifyIMLoggedIn deduped for sdkAppId=$sdkAppId',
       );
       return;
@@ -190,8 +188,9 @@ class PushService {
   }
 
   Future<void> _notifyIMLoggedInInternal(int sdkAppId) async {
-    _logger.info('[PUSH-DEBUG] notifyIMLoggedIn called with sdkAppId=$sdkAppId');
-    print('[PUSH-DEBUG] notifyIMLoggedIn called with sdkAppId=$sdkAppId');
+    _logger.debug(
+      '[PUSH-DEBUG] notifyIMLoggedIn called with sdkAppId=$sdkAppId',
+    );
     if (!_initialized) {
       _logger.error('notifyIMLoggedIn: push not yet initialized');
       return;
@@ -206,10 +205,9 @@ class PushService {
         onNotificationClicked: _onNotificationClicked,
       );
       await _ensurePushListenerRegistered();
-      print('[PUSH-DEBUG] notifyIMLoggedIn registerPush result: code=${result.code}, data=${result.data}');
-      _logger.info(
+      _logger.debug(
         'push re-registered after IM login, sdkAppId=$sdkAppId, '
-        'code=${result.code}, data=${result.data ?? "--"}',
+        'code=${result.code}, dataLength=${result.data?.length ?? 0}',
       );
       if (result.code == 0) {
         _available = true;
@@ -221,7 +219,10 @@ class PushService {
         _registrationId = result.data!.trim();
         _available = true;
         _registrationIdConfirmed = _looksLikeVendorToken(_registrationId!);
-        print('[PUSH-DEBUG] notifyIMLoggedIn captured registrationId from response: $_registrationId');
+        _logger.debug(
+          '[PUSH-DEBUG] notifyIMLoggedIn captured registrationId='
+          '${_maskSensitive(_registrationId)}',
+        );
       }
 
       // TIMPush SDK only auto-registers Huawei+FCM vendor channels.
@@ -238,7 +239,6 @@ class PushService {
       // If an alias was queued while push was unavailable, retry binding now.
       await _retryQueuedAliasIfNeeded();
     } catch (error, stackTrace) {
-      print('[PUSH-DEBUG] notifyIMLoggedIn error: $error, $stackTrace');
       _logger.error(
         'push re-register after IM login failed',
         error: error,
@@ -265,15 +265,24 @@ class PushService {
     final originalRegId = (_registrationId ?? '').trim();
     final originalLooksLikeVendor =
         originalRegId.isNotEmpty && _looksLikeVendorToken(originalRegId);
-    String? latestFallbackRegId = originalRegId.isNotEmpty ? originalRegId : null;
+    String? latestFallbackRegId = originalRegId.isNotEmpty
+        ? originalRegId
+        : null;
     for (var i = 0; i < maxRetries; i++) {
       final regId = (await _getRegistrationIdSafe())?.trim();
-      print('[PUSH-DEBUG] pollRegistrationId attempt ${i + 1}/$maxRetries: $regId (current: ${_registrationId ?? "null"})');
+      _logger.debug(
+        '[PUSH-DEBUG] pollRegistrationId attempt ${i + 1}/$maxRetries: '
+        'fetched=${_maskSensitive(regId)}, '
+        'current=${_maskSensitive(_registrationId)}',
+      );
       if (regId != null && regId.isNotEmpty && _looksLikeVendorToken(regId)) {
         _registrationId = regId;
         _available = true;
         _registrationIdConfirmed = true;
-        _logger.info('RegistrationID obtained after ${i + 1} polls: $regId');
+        _logger.info(
+          'RegistrationID obtained after ${i + 1} polls: '
+          '${_maskSensitive(regId)}',
+        );
         return;
       }
       if ((latestFallbackRegId == null || latestFallbackRegId.isEmpty) &&
@@ -298,7 +307,8 @@ class PushService {
       _available = true;
       _registrationIdConfirmed = _looksLikeVendorToken(resolvedRegId);
       _logger.info(
-        'Polling did not yield a vendor token, using fallback registrationId: $resolvedRegId',
+        'Polling did not yield a vendor token, using fallback registrationId: '
+        '${_maskSensitive(resolvedRegId)}',
       );
     } else {
       _logger.info(
@@ -306,7 +316,10 @@ class PushService {
         'Vendor push channel may not be fully registered.',
       );
     }
-    print('[PUSH-DEBUG] pollRegistrationId: final registrationId=$_registrationId');
+    _logger.debug(
+      '[PUSH-DEBUG] pollRegistrationId: final registrationId='
+      '${_maskSensitive(_registrationId)}',
+    );
   }
 
   /// Check if a token looks like a real vendor push token.
@@ -318,13 +331,29 @@ class PushService {
     return token.length >= 20;
   }
 
+  String _maskSensitive(String? raw, {int keepPrefix = 3, int keepSuffix = 3}) {
+    final value = (raw ?? '').trim();
+    if (value.isEmpty) {
+      return '--';
+    }
+    final visibleThreshold = keepPrefix + keepSuffix + 2;
+    if (value.length <= visibleThreshold) {
+      return '***(${value.length})';
+    }
+    final prefix = value.substring(0, keepPrefix);
+    final suffix = value.substring(value.length - keepSuffix);
+    return '$prefix***$suffix(${value.length})';
+  }
+
   /// Retry binding the queued alias once push becomes available again.
   Future<void> _retryQueuedAliasIfNeeded() async {
     final queued = _queuedAlias;
     if (queued == null || queued.trim().isEmpty || !_available) {
       return;
     }
-    _logger.info('retrying queued alias after IM login: $queued');
+    _logger.info(
+      'retrying queued alias after IM login: ${_maskSensitive(queued)}',
+    );
     await bindAlias(queued);
   }
 
@@ -354,7 +383,8 @@ class PushService {
       await Future.delayed(const Duration(seconds: 2));
       _registrationId = await _getRegistrationIdSafe();
       _logger.info(
-        'After Honor push registration, registrationId=${_registrationId ?? "--"}',
+        'After Honor push registration, registrationId='
+        '${_maskSensitive(_registrationId)}',
       );
     } catch (error, stackTrace) {
       _logger.error(
@@ -513,13 +543,13 @@ class PushService {
       _boundAlias = normalizedAlias;
       _queuedAlias = null;
       _recordAliasBindResult(code: outcome.code, message: outcome.message);
-      _logger.info('push alias bound: $normalizedAlias');
+      _logger.info('push alias bound: ${_maskSensitive(normalizedAlias)}');
       return;
     }
     _queuedAlias = normalizedAlias;
     _recordAliasBindResult(code: outcome.code, message: outcome.message);
     _logger.error(
-      'bind push alias failed: alias=$normalizedAlias, '
+      'bind push alias failed: alias=${_maskSensitive(normalizedAlias)}, '
       'code=${outcome.code}, message=${outcome.message}',
     );
   }

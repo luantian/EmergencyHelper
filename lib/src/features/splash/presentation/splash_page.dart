@@ -107,21 +107,24 @@ class _SplashPageState extends State<SplashPage> {
     AppDependencies dependencies,
   ) async {
     try {
-      print('[PUSH-DEBUG] splash: _ensureCallSessionInBackground started');
+      dependencies.logger.debug(
+        '[PUSH-DEBUG] splash: _ensureCallSessionInBackground started',
+      );
       final result = await TUICallSessionService.instance.ensureLoggedIn(
         dependencies: dependencies,
       );
-      print(
+      dependencies.logger.debug(
         '[PUSH-DEBUG] splash: ensureLoggedIn result=${result.success}, '
-        'message=${result.message}, '
-        'sdkAppId=${TUICallSessionService.instance.activeSdkAppId}',
+        'message=${result.message}',
       );
       var sdkAppId = TUICallSessionService.instance.activeSdkAppId;
       if (!result.success && sdkAppId == null) {
         // ensureLoggedIn may have failed because IM SDK was already logged in
         // (native "has login" reported as failure in Dart layer).
         // Try to fetch UserSig and retry login to get sdkAppId.
-        print('[PUSH-DEBUG] splash: ensureLoggedIn failed, trying to recover');
+        dependencies.logger.debug(
+          '[PUSH-DEBUG] splash: ensureLoggedIn failed, trying to recover',
+        );
         try {
           final authService = dependencies.authService;
           var sessionInfo = await authService.getCachedPermissionInfo();
@@ -138,9 +141,9 @@ class _SplashPageState extends State<SplashPage> {
             );
             if (userSigInfo.sdkAppId > 0) {
               sdkAppId = userSigInfo.sdkAppId;
-              print(
+              dependencies.logger.debug(
                 '[PUSH-DEBUG] splash: recovered sdkAppId=$sdkAppId '
-                'from UserSig for userId=$userId',
+                'from UserSig',
               );
               // Try login again; if "has login" it will be treated as success.
               await TUICallSessionService.instance.ensureLoggedIn(
@@ -153,20 +156,30 @@ class _SplashPageState extends State<SplashPage> {
             }
           }
         } catch (e) {
-          print('[PUSH-DEBUG] splash: recovery failed: $e');
+          dependencies.logger.error(
+            '[PUSH-DEBUG] splash: recovery failed',
+            error: e,
+          );
         }
       }
       if (sdkAppId != null && sdkAppId > 0) {
-        print('[PUSH-DEBUG] splash: calling notifyIMLoggedIn($sdkAppId)');
+        dependencies.logger.debug(
+          '[PUSH-DEBUG] splash: calling notifyIMLoggedIn',
+        );
         await dependencies.pushService.notifyIMLoggedIn(sdkAppId);
-        print('[PUSH-DEBUG] splash: notifyIMLoggedIn completed');
+        dependencies.logger.debug(
+          '[PUSH-DEBUG] splash: notifyIMLoggedIn completed',
+        );
       } else {
-        print(
+        dependencies.logger.debug(
           '[PUSH-DEBUG] splash: no sdkAppId available, push not registered',
         );
       }
     } catch (e) {
-      print('[PUSH-DEBUG] splash: _ensureCallSessionInBackground error: $e');
+      dependencies.logger.error(
+        '[PUSH-DEBUG] splash: _ensureCallSessionInBackground failed',
+        error: e,
+      );
     }
   }
 
