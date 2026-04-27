@@ -3,7 +3,9 @@ import 'dart:async';
 import 'package:emergency_helper/src/core/di/app_dependencies.dart';
 import 'package:emergency_helper/src/core/routing/route_paths.dart';
 import 'package:emergency_helper/src/features/event/data/event_center.dart';
+import 'package:emergency_helper/src/features/push/data/push_service.dart';
 import 'package:emergency_helper/src/features/risk/data/risk_center.dart';
+import 'package:emergency_helper/src/features/trtc/data/tuicall_session_service.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -75,6 +77,13 @@ class _SplashPageState extends State<SplashPage> {
       return;
     }
     context.go(RoutePaths.home);
+    final userIdHint = _extractUserIdFromPermissionInfo(permissionInfo);
+    unawaited(
+      TUICallSessionService.instance.warmupSessionAndPushInBackground(
+        dependencies: dependencies,
+        userIdHint: userIdHint,
+      ),
+    );
     unawaited(
       _bindPushAliasInBackground(
         dependencies: dependencies,
@@ -105,9 +114,16 @@ class _SplashPageState extends State<SplashPage> {
     AppDependencies dependencies,
   ) async {
     try {
+      await TUICallSessionService.instance.logoutSilently(
+        dependencies: dependencies,
+      );
       await dependencies.pushService.unbindAlias();
       await dependencies.pushService.clearBadgeAndNotifications();
     } catch (_) {}
+  }
+
+  String? _extractUserIdFromPermissionInfo(Map<String, dynamic>? info) {
+    return PushService.extractAliasFromPermissionInfo(info);
   }
 
   @override

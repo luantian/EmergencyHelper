@@ -36,7 +36,10 @@ class PushService {
   int? _ongoingNotifyImLoginSdkAppId;
   DateTime? _lastNotifyImLoginAt;
   int? _lastNotifyImLoginSdkAppId;
+  int _lifecycleEpoch = 0;
   static const Duration _notifyImLoginDedupWindow = Duration(seconds: 8);
+  static const Duration _registerPushTimeout = Duration(seconds: 10);
+  static const Duration _getRegistrationIdTimeout = Duration(seconds: 5);
   static const List<Duration> _aliasBindRetryBackoffs = <Duration>[
     Duration.zero,
     Duration(seconds: 2),
@@ -158,6 +161,7 @@ class PushService {
   /// This registers push with the correct sdkAppId so the native TIMPush SDK
   /// can properly report the vendor channel token to the Tencent IM server.
   Future<void> notifyIMLoggedIn(int sdkAppId) async {
+    final epoch = _lifecycleEpoch;
     final running = _ongoingNotifyImLoginTask;
     if (running != null && _ongoingNotifyImLoginSdkAppId == sdkAppId) {
       await running;
@@ -173,7 +177,7 @@ class PushService {
       );
       return;
     }
-    final task = _notifyIMLoggedInInternal(sdkAppId);
+    final task = _notifyIMLoggedInInternal(sdkAppId, epoch: epoch);
     _ongoingNotifyImLoginTask = task;
     _ongoingNotifyImLoginSdkAppId = sdkAppId;
     try {
@@ -188,10 +192,16 @@ class PushService {
     }
   }
 
-  Future<void> _notifyIMLoggedInInternal(int sdkAppId) async {
+  Future<void> _notifyIMLoggedInInternal(
+    int sdkAppId, {
+    required int epoch,
+  }) async {
     _logger.debug(
       '[PUSH-DEBUG] notifyIMLoggedIn called with sdkAppId=$sdkAppId',
     );
+    if (_isEpochStale(epoch)) {
+      return;
+    }
     if (!_initialized) {
       _logger.error('notifyIMLoggedIn: push not yet initialized');
       return;
@@ -201,10 +211,15 @@ class PushService {
       return;
     }
     try {
-      final result = await _chatPush.registerPush(
-        sdkAppId: sdkAppId,
-        onNotificationClicked: _onNotificationClicked,
-      );
+      final result = await _chatPush
+          .registerPush(
+            sdkAppId: sdkAppId,
+            onNotificationClicked: _onNotificationClicked,
+          )
+          .timeout(_registerPushTimeout);
+      if (_isEpochStale(epoch)) {
+        return;
+      }
       await _ensurePushListenerRegistered();
       _logger.debug(
         'push re-registered after IM login, sdkAppId=$sdkAppId, '
@@ -230,12 +245,12 @@ class PushService {
       // On Honor devices (without HMS), we need to manually register
       // the Honor push channel after the IM login completes.
       if (await _isHonorDevice()) {
-        await _registerHonorPush();
+        await _registerHonorPush(epoch: epoch);
       }
 
       // Vendor push tokens (Huawei/Honor) are obtained asynchronously.
       // Wait and retry until we get a valid RegistrationID.
-      await _pollRegistrationId();
+      await _pollRegistrationId(epoch: epoch);
 
       // If an alias was queued while push was unavailable, retry binding now.
       await _retryQueuedAliasIfNeeded();
@@ -247,9 +262,9 @@ class PushService {
       );
       // Still try Honor push and polling even if main registration failed.
       if (await _isHonorDevice()) {
-        await _registerHonorPush();
+        await _registerHonorPush(epoch: epoch);
       }
-      await _pollRegistrationId();
+      await _pollRegistrationId(epoch: epoch);
 
       // Retry queued alias even on partial recovery.
       await _retryQueuedAliasIfNeeded();
@@ -260,7 +275,7 @@ class PushService {
   /// Vendor tokens (Huawei/Honor) arrive asynchronously, so we need to wait.
   /// A real vendor token is typically a long base64-like string (20+ chars),
   /// whereas a userId is usually short (1-10 chars).
-  Future<void> _pollRegistrationId() async {
+  Future<void> _pollRegistrationId({required int epoch}) async {
     const maxRetries = 15;
     const retryDelay = Duration(seconds: 2);
     final originalRegId = (_registrationId ?? '').trim();
@@ -270,6 +285,9 @@ class PushService {
         ? originalRegId
         : null;
     for (var i = 0; i < maxRetries; i++) {
+      if (_isEpochStale(epoch)) {
+        return;
+      }
       final regId = (await _getRegistrationIdSafe())?.trim();
       _logger.debug(
         '[PUSH-DEBUG] pollRegistrationId attempt ${i + 1}/$maxRetries: '
@@ -294,6 +312,9 @@ class PushService {
       if (i < maxRetries - 1) {
         await Future.delayed(retryDelay);
       }
+    }
+    if (_isEpochStale(epoch)) {
+      return;
     }
     // If polling didn't yield a vendor token, keep whatever we had before
     // (which might be from the registerPush response).
@@ -331,6 +352,8 @@ class PushService {
     // and contain characters typical of base64 encoding.
     return token.length >= 20;
   }
+
+  bool _isEpochStale(int epoch) => epoch != _lifecycleEpoch;
 
   String _maskSensitive(String? raw, {int keepPrefix = 3, int keepSuffix = 3}) {
     final value = (raw ?? '').trim();
@@ -375,13 +398,19 @@ class PushService {
   /// Manually trigger Honor push registration via native method channel.
   /// TIMPush SDK skips Honor channel entirely on Honor devices (uses
   /// Huawei→FCM fallback instead), so we need this manual step.
-  Future<void> _registerHonorPush() async {
+  Future<void> _registerHonorPush({required int epoch}) async {
+    if (_isEpochStale(epoch)) {
+      return;
+    }
     try {
       const channel = MethodChannel('com.tianyanzhiyun/push_honor');
       await channel.invokeMethod('registerHonorPush');
       _logger.info('Honor push registration triggered');
       // Give Honor push SDK time to register and get token, then refresh.
       await Future.delayed(const Duration(seconds: 2));
+      if (_isEpochStale(epoch)) {
+        return;
+      }
       _registrationId = await _getRegistrationIdSafe();
       _logger.info(
         'After Honor push registration, registrationId='
@@ -556,6 +585,7 @@ class PushService {
   }
 
   Future<void> unbindAlias() async {
+    _lifecycleEpoch++;
     _queuedAlias = null;
     _boundAlias = null;
     _available = false;
@@ -668,7 +698,9 @@ class PushService {
 
   Future<String?> _getRegistrationIdSafe() async {
     try {
-      final result = await TencentCloudChatPush().getRegistrationID();
+      final result = await TencentCloudChatPush().getRegistrationID().timeout(
+        _getRegistrationIdTimeout,
+      );
       if (result.code == 0 && result.data != null && result.data!.isNotEmpty) {
         return result.data!.trim();
       }
@@ -684,6 +716,7 @@ class PushService {
   }
 
   void dispose() {
+    _lifecycleEpoch++;
     final listener = _pushListener;
     if (listener != null) {
       unawaited(_chatPush.removePushListener(listener: listener));

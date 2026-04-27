@@ -11,27 +11,127 @@ class TUICallSessionService {
 
   static final TUICallSessionService instance = TUICallSessionService._();
   static const int _defaultRoomId = 100001;
+  static const Duration _ensureLoginTimeout = Duration(seconds: 20);
+  static const List<Duration> _warmupRetryBackoffs = <Duration>[
+    Duration.zero,
+    Duration(seconds: 2),
+    Duration(seconds: 5),
+  ];
 
   final TrtcService _trtcService = const TrtcService();
   Future<TUICallSessionState>? _ongoingEnsureTask;
   Future<void>? _ongoingLogoutTask;
+  Future<void>? _ongoingWarmupTask;
   Future<void> _sessionTransitionQueue = Future<void>.value();
   String? _activeUserId;
   int? _activeSdkAppId;
   String? _activeUserSig;
   DateTime? _activeUserSigFetchedAt;
+  int _sessionEpoch = 0;
   static const Duration _activeSigReuseWindow = Duration(minutes: 30);
 
   /// The sdkAppId of the currently active IM session, or null if not logged in.
   int? get activeSdkAppId => _activeSdkAppId;
 
   void clearLocalSessionState() {
+    _sessionEpoch++;
     _ongoingEnsureTask = null;
     _ongoingLogoutTask = null;
+    _ongoingWarmupTask = null;
     _activeUserId = null;
     _activeSdkAppId = null;
     _activeUserSig = null;
     _activeUserSigFetchedAt = null;
+  }
+
+  Future<void> warmupSessionAndPushInBackground({
+    required AppDependencies dependencies,
+    int roomIdHint = _defaultRoomId,
+    String? userIdHint,
+  }) async {
+    final running = _ongoingWarmupTask;
+    if (running != null) {
+      await running;
+      return;
+    }
+    final epoch = _sessionEpoch;
+    final task = _warmupSessionAndPushInBackgroundInternal(
+      dependencies: dependencies,
+      roomIdHint: roomIdHint,
+      userIdHint: userIdHint,
+      epoch: epoch,
+    );
+    _ongoingWarmupTask = task;
+    try {
+      await task;
+    } finally {
+      if (identical(_ongoingWarmupTask, task)) {
+        _ongoingWarmupTask = null;
+      }
+    }
+  }
+
+  Future<void> _warmupSessionAndPushInBackgroundInternal({
+    required AppDependencies dependencies,
+    required int roomIdHint,
+    required String? userIdHint,
+    required int epoch,
+  }) async {
+    final totalAttempts = _warmupRetryBackoffs.length;
+    for (var index = 0; index < totalAttempts; index++) {
+      if (_isEpochStale(epoch)) {
+        dependencies.logger.debug(
+          '[PUSH-DEBUG] warmup cancelled by session epoch switch',
+        );
+        return;
+      }
+      final backoff = _warmupRetryBackoffs[index];
+      if (backoff > Duration.zero) {
+        await Future<void>.delayed(backoff);
+      }
+      if (_isEpochStale(epoch)) {
+        return;
+      }
+      final attempt = index + 1;
+      try {
+        final result = await ensureLoggedIn(
+          dependencies: dependencies,
+          roomIdHint: roomIdHint,
+          userIdHint: userIdHint,
+        ).timeout(_ensureLoginTimeout);
+        if (_isEpochStale(epoch)) {
+          return;
+        }
+        if (result.success) {
+          dependencies.logger.info(
+            '[PUSH-DEBUG] warmup IM+push completed on attempt '
+            '$attempt/$totalAttempts',
+          );
+          return;
+        }
+        dependencies.logger.error(
+          '[PUSH-DEBUG] warmup IM+push failed on attempt '
+          '$attempt/$totalAttempts: ${result.message}',
+        );
+      } on TimeoutException catch (error, stackTrace) {
+        dependencies.logger.error(
+          '[PUSH-DEBUG] warmup IM+push timeout on attempt '
+          '$attempt/$totalAttempts',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      } catch (error, stackTrace) {
+        dependencies.logger.error(
+          '[PUSH-DEBUG] warmup IM+push threw on attempt '
+          '$attempt/$totalAttempts',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+    }
+    dependencies.logger.error(
+      '[PUSH-DEBUG] warmup IM+push reached retry limit ($totalAttempts)',
+    );
   }
 
   Future<TUICallSessionState> ensureLoggedIn({
@@ -68,6 +168,7 @@ class TUICallSessionService {
     required bool forceRefreshSig,
     String? userIdHint,
   }) async {
+    final epoch = _sessionEpoch;
     String? currentUserId;
 
     // Try 1: userIdHint provided directly
@@ -111,6 +212,7 @@ class TUICallSessionService {
       userId: currentUserId,
       roomIdHint: roomIdHint,
       forceRefreshSig: forceRefreshSig,
+      epoch: epoch,
     );
   }
 
@@ -119,7 +221,11 @@ class TUICallSessionService {
     required String userId,
     required int roomIdHint,
     required bool forceRefreshSig,
+    required int epoch,
   }) async {
+    if (_isEpochStale(epoch)) {
+      return const TUICallSessionState.failure('SESSION_CANCELLED');
+    }
     final currentUserId = userId;
     final nickname =
         _extractNickname(
@@ -202,6 +308,9 @@ class TUICallSessionService {
     }
 
     try {
+      if (_isEpochStale(epoch)) {
+        return const TUICallSessionState.failure('SESSION_CANCELLED');
+      }
       if (_activeUserId != null && _activeUserId != currentUserId) {
         try {
           await TUICallKit.instance.logout().timeout(
@@ -219,6 +328,9 @@ class TUICallSessionService {
       final callKitLoginResult = await TUICallKit.instance
           .login(userSigInfo.sdkAppId, userSigInfo.userId, userSigInfo.userSig)
           .timeout(const Duration(seconds: 15));
+      if (_isEpochStale(epoch)) {
+        return const TUICallSessionState.failure('SESSION_CANCELLED');
+      }
 
       final callKitReady =
           callKitLoginResult.isSuccess ||
@@ -274,6 +386,7 @@ class TUICallSessionService {
         _notifyPushRegistrationInBackground(
           dependencies: dependencies,
           sdkAppId: userSigInfo.sdkAppId,
+          epoch: epoch,
         ),
       );
 
@@ -316,6 +429,9 @@ class TUICallSessionService {
   }
 
   Future<void> _logoutSilentlyInternal({AppDependencies? dependencies}) async {
+    _sessionEpoch++;
+    _ongoingEnsureTask = null;
+    _ongoingWarmupTask = null;
     try {
       await TUICallKit.instance.logout().timeout(const Duration(seconds: 4));
     } catch (_) {
@@ -326,16 +442,16 @@ class TUICallSessionService {
 
   Future<T> _enqueueSessionTransition<T>(Future<T> Function() action) {
     final completer = Completer<T>();
-    _sessionTransitionQueue = _sessionTransitionQueue
-        .catchError((_) {})
-        .then((_) async {
-          try {
-            final value = await action();
-            completer.complete(value);
-          } catch (error, stackTrace) {
-            completer.completeError(error, stackTrace);
-          }
-        });
+    _sessionTransitionQueue = _sessionTransitionQueue.catchError((_) {}).then((
+      _,
+    ) async {
+      try {
+        final value = await action();
+        completer.complete(value);
+      } catch (error, stackTrace) {
+        completer.completeError(error, stackTrace);
+      }
+    });
     return completer.future;
   }
 
@@ -346,17 +462,26 @@ class TUICallSessionService {
     return DateTime.now().difference(fetchedAt) <= _activeSigReuseWindow;
   }
 
+  bool _isEpochStale(int epoch) => epoch != _sessionEpoch;
+
   Future<void> _notifyPushRegistrationInBackground({
     required AppDependencies dependencies,
     required int sdkAppId,
+    required int epoch,
   }) async {
     if (sdkAppId <= 0) {
+      return;
+    }
+    if (_isEpochStale(epoch)) {
       return;
     }
     try {
       await dependencies.pushService
           .notifyIMLoggedIn(sdkAppId)
           .timeout(const Duration(seconds: 12));
+      if (_isEpochStale(epoch)) {
+        return;
+      }
     } catch (error, stackTrace) {
       dependencies.logger.error(
         'notifyIMLoggedIn after TUICall login failed (non-blocking)',

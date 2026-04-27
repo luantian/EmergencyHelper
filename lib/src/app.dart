@@ -131,10 +131,7 @@ class _EmergencyHelperAppState extends State<EmergencyHelperApp> {
 
       final stillAuthorized = await widget.dependencies.authService
           .ensureValidAccessToken(validateWithServer: true)
-          .timeout(
-            const Duration(seconds: 5),
-            onTimeout: () => true,
-          );
+          .timeout(const Duration(seconds: 5), onTimeout: () => true);
       if (stillAuthorized) {
         widget.dependencies.logger.info(
           'stale auth expired ignored: path=${event.path}',
@@ -183,7 +180,12 @@ class _EmergencyHelperAppState extends State<EmergencyHelperApp> {
       widget.dependencies.pushService.clearBadgeAndNotifications(),
       timeout: const Duration(seconds: 2),
     );
-    TUICallSessionService.instance.clearLocalSessionState();
+    await _runWithTimeout(
+      TUICallSessionService.instance.logoutSilently(
+        dependencies: widget.dependencies,
+      ),
+      timeout: const Duration(seconds: 4),
+    );
   }
 
   Future<void> _runWithTimeout(
@@ -342,6 +344,7 @@ class _EmergencyHelperAppState extends State<EmergencyHelperApp> {
     }
     return '\u89C6\u9891';
   }
+
   String _normalizePushKey(String value) {
     return value.trim().toLowerCase().replaceAll('-', '_').replaceAll(' ', '');
   }

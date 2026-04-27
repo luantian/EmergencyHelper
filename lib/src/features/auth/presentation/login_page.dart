@@ -10,7 +10,9 @@ import 'package:emergency_helper/src/core/theme/app_theme.dart';
 import 'package:emergency_helper/src/core/widgets/app_center_toast.dart';
 import 'package:emergency_helper/src/core/widgets/app_loading_overlay.dart';
 import 'package:emergency_helper/src/features/event/data/event_center.dart';
+import 'package:emergency_helper/src/features/push/data/push_service.dart';
 import 'package:emergency_helper/src/features/risk/data/risk_center.dart';
+import 'package:emergency_helper/src/features/trtc/data/tuicall_session_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:getwidget/getwidget.dart';
@@ -289,7 +291,9 @@ class _LoginPageState extends State<LoginPage> {
     } on AppException catch (error) {
       _showMessage(error.message);
     } catch (_) {
-      _showMessage('\u767b\u5f55\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5');
+      _showMessage(
+        '\u767b\u5f55\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5',
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -304,6 +308,13 @@ class _LoginPageState extends State<LoginPage> {
     required Map<String, dynamic> permissionInfo,
   }) async {
     await Future<void>.delayed(const Duration(milliseconds: 300));
+    final userIdHint = _extractUserIdFromPermissionInfo(permissionInfo);
+    unawaited(
+      TUICallSessionService.instance.warmupSessionAndPushInBackground(
+        dependencies: dependencies,
+        userIdHint: userIdHint,
+      ),
+    );
     unawaited(
       _bindPushAliasInBackground(
         dependencies: dependencies,
@@ -358,6 +369,10 @@ class _LoginPageState extends State<LoginPage> {
         );
       } catch (_) {}
     }
+  }
+
+  String? _extractUserIdFromPermissionInfo(Map<String, dynamic> info) {
+    return PushService.extractAliasFromPermissionInfo(info);
   }
 
   void _showMessage(String message) {

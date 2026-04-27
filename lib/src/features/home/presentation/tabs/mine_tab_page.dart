@@ -182,9 +182,10 @@ class _MineTabPageState extends State<MineTabPage> {
         timeout: const Duration(seconds: 3),
       );
     }
-    // Keep logout stable: do not trigger call SDK logout during auth teardown.
-    // The call SDK session is initialized lazily only when entering call pages.
-    TUICallSessionService.instance.clearLocalSessionState();
+    await _runWithTimeout(
+      TUICallSessionService.instance.logoutSilently(dependencies: dependencies),
+      timeout: const Duration(seconds: 4),
+    );
     await _runWithTimeout(
       dependencies.pushService.unbindAlias(),
       timeout: const Duration(seconds: 2),
@@ -607,7 +608,10 @@ class _ActionCard extends StatelessWidget {
           ListTile(
             key: const Key('open-business-debug-button'),
             dense: true,
-            leading: const Icon(Icons.bug_report_outlined, color: Color(0xFF386EBB)),
+            leading: const Icon(
+              Icons.bug_report_outlined,
+              color: Color(0xFF386EBB),
+            ),
             title: const Text(
               '\u4E1A\u52A1\u8C03\u8BD5',
               style: TextStyle(
@@ -649,4 +653,3 @@ class UserProfileViewData {
   final String job;
   final String mobile;
 }
-
