@@ -163,7 +163,8 @@ class PushService {
       await running;
       return;
     }
-    if (_lastNotifyImLoginSdkAppId == sdkAppId &&
+    if (_available &&
+        _lastNotifyImLoginSdkAppId == sdkAppId &&
         _lastNotifyImLoginAt != null &&
         DateTime.now().difference(_lastNotifyImLoginAt!) <
             _notifyImLoginDedupWindow) {
@@ -560,6 +561,10 @@ class PushService {
     _available = false;
     _registrationId = null;
     _registrationIdConfirmed = false;
+    _ongoingNotifyImLoginTask = null;
+    _ongoingNotifyImLoginSdkAppId = null;
+    _lastNotifyImLoginAt = null;
+    _lastNotifyImLoginSdkAppId = null;
     _recordAliasBindResult(code: 'UNBIND', message: 'Alias unbound');
     _logger.info('push alias unbound (local state cleared)');
   }

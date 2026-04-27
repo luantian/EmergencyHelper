@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:emergency_helper/src/core/di/app_dependencies.dart';
 import 'package:emergency_helper/src/core/theme/app_theme.dart';
 import 'package:emergency_helper/src/core/widgets/app_center_toast.dart';
@@ -14,7 +16,10 @@ class PushDebugPage extends StatefulWidget {
 }
 
 class _PushDebugPageState extends State<PushDebugPage> {
+  static const Duration _pushOpTimeout = Duration(seconds: 6);
+
   bool _loading = true;
+  bool _refreshing = false;
   bool _binding = false;
   Map<String, dynamic>? _permissionInfo;
   PushDebugSnapshot? _snapshot;
@@ -22,7 +27,7 @@ class _PushDebugPageState extends State<PushDebugPage> {
   @override
   void initState() {
     super.initState();
-    _refreshState();
+    Future<void>.microtask(_refreshState);
   }
 
   @override
@@ -40,7 +45,7 @@ class _PushDebugPageState extends State<PushDebugPage> {
       body: _loading && snapshot == null
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
-              onRefresh: _refreshState,
+              onRefresh: () => _refreshState(showTimeoutToast: true),
               child: ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: const EdgeInsets.fromLTRB(12, 12, 12, 22),
@@ -61,7 +66,8 @@ class _PushDebugPageState extends State<PushDebugPage> {
   }
 
   Widget _buildActionCard(PushDebugSnapshot? snapshot) {
-    final canRebind = !_binding && !_loading;
+    final refreshingOrLoading = _loading || _refreshing;
+    final canRebind = !_binding && !refreshingOrLoading;
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
       decoration: _cardDecoration(),
@@ -70,9 +76,11 @@ class _PushDebugPageState extends State<PushDebugPage> {
         runSpacing: 10,
         children: <Widget>[
           ElevatedButton.icon(
-            onPressed: _loading ? null : _refreshState,
+            onPressed: refreshingOrLoading
+                ? null
+                : () => _refreshState(showTimeoutToast: true),
             icon: const Icon(Icons.refresh_rounded, size: 18),
-            label: const Text('刷新状态'),
+            label: Text(_refreshing ? '刷新中...' : '刷新状态'),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppTheme.primaryBlue,
               foregroundColor: Colors.white,
@@ -206,40 +214,94 @@ class _PushDebugPageState extends State<PushDebugPage> {
     );
   }
 
-  Future<void> _refreshState() async {
-    final dependencies = context.read<AppDependencies>();
-    final permissionInfo = await dependencies.authService
-        .getCachedPermissionInfo();
-    final userId = PushService.extractAliasFromPermissionInfo(permissionInfo);
-    await dependencies.pushService.refreshRegistrationId();
-    final snapshot = dependencies.pushService.getDebugSnapshot(userId: userId);
-    if (!mounted) {
+  Future<void> _refreshState({bool showTimeoutToast = false}) async {
+    if (_refreshing) {
       return;
     }
-    setState(() {
-      _permissionInfo = permissionInfo;
-      _snapshot = snapshot;
-      _loading = false;
-    });
+    if (mounted) {
+      setState(() {
+        _refreshing = true;
+        if (_snapshot == null) {
+          _loading = true;
+        }
+      });
+    }
+
+    final dependencies = context.read<AppDependencies>();
+    String? tipMessage;
+
+    try {
+      final permissionInfo = await dependencies.authService
+          .getCachedPermissionInfo();
+      final userId = PushService.extractAliasFromPermissionInfo(permissionInfo);
+      tipMessage = await _refreshRegistrationIdWithTimeout(dependencies);
+      final snapshot = dependencies.pushService.getDebugSnapshot(
+        userId: userId,
+      );
+
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _permissionInfo = permissionInfo;
+        _snapshot = snapshot;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showMessage('刷新状态失败: $error');
+      setState(() {
+        _loading = false;
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _refreshing = false;
+        });
+      }
+    }
+
+    if (showTimeoutToast && tipMessage != null && mounted) {
+      _showMessage(tipMessage);
+    }
   }
 
   Future<void> _rebindAlias() async {
+    if (_binding) {
+      return;
+    }
+
     setState(() {
       _binding = true;
     });
+
     final dependencies = context.read<AppDependencies>();
+    String? tipMessage;
+
     try {
       final permissionInfo =
           _permissionInfo ??
           await dependencies.authService.getCachedPermissionInfo();
       final userId = PushService.extractAliasFromPermissionInfo(permissionInfo);
+
       if (userId == null || userId.trim().isEmpty) {
         _showMessage('未拿到 userId，无法绑定 alias');
       } else {
-        await dependencies.pushService.bindAlias(userId.trim());
-        _showMessage('已触发别名绑定: $userId');
+        try {
+          await dependencies.pushService
+              .bindAlias(userId.trim())
+              .timeout(_pushOpTimeout);
+          _showMessage('已触发别名绑定: $userId');
+        } on TimeoutException {
+          tipMessage = '绑定请求超时，已在后台继续执行';
+        }
       }
-      await dependencies.pushService.refreshRegistrationId();
+
+      final refreshTip = await _refreshRegistrationIdWithTimeout(dependencies);
+      tipMessage ??= refreshTip;
+
       final snapshot = dependencies.pushService.getDebugSnapshot(
         userId: userId,
       );
@@ -258,6 +320,25 @@ class _PushDebugPageState extends State<PushDebugPage> {
           _binding = false;
         });
       }
+    }
+
+    if (tipMessage != null && mounted) {
+      _showMessage(tipMessage);
+    }
+  }
+
+  Future<String?> _refreshRegistrationIdWithTimeout(
+    AppDependencies dependencies,
+  ) async {
+    try {
+      await dependencies.pushService.refreshRegistrationId().timeout(
+        _pushOpTimeout,
+      );
+      return null;
+    } on TimeoutException {
+      return '获取 Registration ID 超时，已展示当前缓存状态';
+    } catch (_) {
+      return '获取 Registration ID 失败，已展示当前缓存状态';
     }
   }
 

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:emergency_helper/src/core/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 
 class AppCenterToast {
@@ -38,15 +39,16 @@ class AppCenterToast {
             child: Container(
               constraints: const BoxConstraints(maxWidth: 280),
               margin: const EdgeInsets.symmetric(horizontal: 24),
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
               decoration: BoxDecoration(
-                color: const Color(0xD9202730),
-                borderRadius: BorderRadius.circular(12),
+                color: const Color(0xE7222C38),
+                borderRadius: BorderRadius.circular(AppTheme.radiusLg),
+                border: Border.all(color: const Color(0x26FFFFFF)),
                 boxShadow: const <BoxShadow>[
                   BoxShadow(
-                    color: Color(0x33000000),
-                    blurRadius: 12,
-                    offset: Offset(0, 4),
+                    color: Color(0x4D000000),
+                    blurRadius: 16,
+                    offset: Offset(0, 8),
                   ),
                 ],
               ),
@@ -56,8 +58,8 @@ class AppCenterToast {
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  height: 1.35,
+                  fontWeight: FontWeight.w600,
+                  height: 1.32,
                 ),
               ),
             ),

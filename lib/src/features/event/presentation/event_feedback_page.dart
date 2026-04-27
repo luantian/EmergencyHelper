@@ -164,7 +164,12 @@ class _EventFeedbackPageState extends State<EventFeedbackPage> {
             decoration: BoxDecoration(
               color: const Color(0xFFF8FAFD),
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFFD4DEEA)),
+              border: const Border(
+                top: BorderSide(color: Color(0xFFB9C8D8), width: 1.4),
+                right: BorderSide(color: Color(0xFFB9C8D8), width: 1.4),
+                bottom: BorderSide(color: Color(0xFFB9C8D8), width: 1.4),
+                left: BorderSide(color: Color(0xFFB9C8D8), width: 1.4),
+              ),
             ),
             child: TextField(
               controller: _contentController,
@@ -176,7 +181,13 @@ class _EventFeedbackPageState extends State<EventFeedbackPage> {
                 height: 1.4,
               ),
               decoration: const InputDecoration(
+                filled: false,
                 border: InputBorder.none,
+                enabledBorder: InputBorder.none,
+                focusedBorder: InputBorder.none,
+                disabledBorder: InputBorder.none,
+                errorBorder: InputBorder.none,
+                focusedErrorBorder: InputBorder.none,
                 isDense: true,
                 contentPadding: EdgeInsets.zero,
                 hintText: '请填写现场处置进展、影响范围、后续计划等',
@@ -385,12 +396,16 @@ class _EventFeedbackPageState extends State<EventFeedbackPage> {
           _compressingAttachments = true;
         });
       }
-      ImageAttachmentCompressionResult imageCompressionResult;
+      var imageCompressionResult = ImageAttachmentCompressionResult(
+        files: filesToAppend,
+      );
       VideoAttachmentCompressionResult videoCompressionResult;
       try {
-        imageCompressionResult = await _imageAttachmentCompressor
-            .compressPickedFiles(filesToAppend);
-        filesToAppend = imageCompressionResult.files;
+        if (!isVideoFlow) {
+          imageCompressionResult = await _imageAttachmentCompressor
+              .compressPickedFiles(filesToAppend);
+          filesToAppend = imageCompressionResult.files;
+        }
 
         videoCompressionResult = await _videoAttachmentCompressor
             .compressPickedFiles(filesToAppend);
@@ -406,7 +421,9 @@ class _EventFeedbackPageState extends State<EventFeedbackPage> {
         return;
       }
 
-      if (!isVideoFlow && imageCompressionResult.compressedCount > 0) {
+      if (!isVideoFlow &&
+          imageCompressionResult.hasImageInput &&
+          imageCompressionResult.compressedCount > 0) {
         final summaryParts = <String>[
           '已压缩${imageCompressionResult.compressedCount}张图片',
         ];
@@ -415,10 +432,14 @@ class _EventFeedbackPageState extends State<EventFeedbackPage> {
         }
         _showMessage(summaryParts.join('，'));
       }
-      if (!isVideoFlow && imageCompressionResult.failedCount > 0) {
+      if (!isVideoFlow &&
+          imageCompressionResult.hasImageInput &&
+          imageCompressionResult.failedCount > 0) {
         _showMessage('有${imageCompressionResult.failedCount}张图片压缩失败，已使用原图');
       }
-      if (!isVideoFlow && imageCompressionResult.overSizeCount > 0) {
+      if (!isVideoFlow &&
+          imageCompressionResult.hasImageInput &&
+          imageCompressionResult.overSizeCount > 0) {
         _showMessage(
           '有${imageCompressionResult.overSizeCount}张图片仍超过8MB，建议裁剪后重试',
         );

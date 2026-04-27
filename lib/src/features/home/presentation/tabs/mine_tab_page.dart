@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:emergency_helper/src/core/constants/app_constants.dart';
 import 'package:emergency_helper/src/core/auth/app_feature_permission.dart';
 import 'package:emergency_helper/src/core/di/app_dependencies.dart';
 import 'package:emergency_helper/src/core/errors/app_exception.dart';
@@ -53,6 +54,7 @@ class _MineTabPageState extends State<MineTabPage> {
           _ActionCard(
             onChangePassword: () => context.push(RoutePaths.changePassword),
             onPushDebug: () => context.push(RoutePaths.pushDebug),
+            onBusinessDebug: () => context.push(RoutePaths.businessDebug),
           ),
           const SizedBox(height: 16),
           SizedBox(
@@ -120,35 +122,37 @@ class _MineTabPageState extends State<MineTabPage> {
   }
 
   Future<void> _onLogout() async {
+    if (_loggingOut) {
+      return;
+    }
     setState(() {
       _loggingOut = true;
     });
 
     try {
       final dependencies = context.read<AppDependencies>();
-      if (!_isFlutterTestEnv()) {
-        await _runWithTimeout(
-          dependencies.authService.logout(),
-          timeout: const Duration(seconds: 3),
-        );
-        await _runWithTimeout(
-          TUICallSessionService.instance.logoutSilently(
-            dependencies: dependencies,
-          ),
-          timeout: const Duration(seconds: 5),
-        );
-      }
+      final shouldNotifyServer = !_isFlutterTestEnv();
+      final tokenSnapshot = shouldNotifyServer
+          ? await dependencies.authLocalStore.getAccessToken()
+          : null;
+      dependencies.apiClient.cancelAllPendingRequests(reason: 'MANUAL_LOGOUT');
+      dependencies.apiClient.resetAuthExpiredState();
       await dependencies.authLocalStore.clear();
       EventCenter.instance.resetSessionCache(notify: false);
       RiskCenter.instance.resetSessionData(notify: false);
       AppFeaturePermissionResolver.instance.clearCache();
-      // Push SDK operations may occasionally hang on some devices.
-      // Run them in background and do not block UI logout.
-      unawaited(_cleanupPushStateInBackground(dependencies));
+      // Make logout responsive: jump to login first, then cleanup in background.
       if (!mounted) {
         return;
       }
       context.go(RoutePaths.login);
+      unawaited(
+        _finalizeLogoutInBackground(
+          dependencies: dependencies,
+          accessToken: tokenSnapshot,
+          shouldNotifyServer: shouldNotifyServer,
+        ),
+      );
     } on AppException catch (error) {
       _showMessage(error.message);
     } catch (_) {
@@ -164,9 +168,23 @@ class _MineTabPageState extends State<MineTabPage> {
     }
   }
 
-  Future<void> _cleanupPushStateInBackground(
-    AppDependencies dependencies,
-  ) async {
+  Future<void> _finalizeLogoutInBackground({
+    required AppDependencies dependencies,
+    required String? accessToken,
+    required bool shouldNotifyServer,
+  }) async {
+    if (shouldNotifyServer) {
+      await _runWithTimeout(
+        _notifyServerLogout(
+          dependencies: dependencies,
+          accessToken: accessToken,
+        ),
+        timeout: const Duration(seconds: 3),
+      );
+    }
+    // Keep logout stable: do not trigger call SDK logout during auth teardown.
+    // The call SDK session is initialized lazily only when entering call pages.
+    TUICallSessionService.instance.clearLocalSessionState();
     await _runWithTimeout(
       dependencies.pushService.unbindAlias(),
       timeout: const Duration(seconds: 2),
@@ -175,6 +193,23 @@ class _MineTabPageState extends State<MineTabPage> {
       dependencies.pushService.clearBadgeAndNotifications(),
       timeout: const Duration(seconds: 2),
     );
+  }
+
+  Future<void> _notifyServerLogout({
+    required AppDependencies dependencies,
+    required String? accessToken,
+  }) async {
+    final token = (accessToken ?? '').trim();
+    if (token.isEmpty) {
+      return;
+    }
+    try {
+      await dependencies.apiClient.postJson(
+        AppConstants.authLogoutPath,
+        headers: <String, String>{'authorization': token},
+        withAuthorization: false,
+      );
+    } catch (_) {}
   }
 
   Future<void> _runWithTimeout(
@@ -503,10 +538,12 @@ class _ActionCard extends StatelessWidget {
   const _ActionCard({
     required this.onChangePassword,
     required this.onPushDebug,
+    required this.onBusinessDebug,
   });
 
   final VoidCallback onChangePassword;
   final VoidCallback onPushDebug;
+  final VoidCallback onBusinessDebug;
 
   @override
   Widget build(BuildContext context) {
@@ -549,7 +586,7 @@ class _ActionCard extends StatelessWidget {
               color: Color(0xFF386EBB),
             ),
             title: const Text(
-              '推送调试',
+              '\u63A8\u9001\u8C03\u8BD5',
               style: TextStyle(
                 color: Color(0xFF1F2B3A),
                 fontSize: 14,
@@ -557,7 +594,7 @@ class _ActionCard extends StatelessWidget {
               ),
             ),
             subtitle: const Text(
-              '查看 userId、别名、Registration ID 与绑定结果',
+              '\u67E5\u770B userId\u3001Registration ID \u548C alias \u7ED1\u5B9A\u7ED3\u679C',
               style: TextStyle(color: Color(0xFF7A889A), fontSize: 12),
             ),
             trailing: const Icon(
@@ -565,6 +602,29 @@ class _ActionCard extends StatelessWidget {
               color: Color(0xFF8A97A8),
             ),
             onTap: onPushDebug,
+          ),
+          const Divider(height: 1, color: Color(0xFFE8EEF7)),
+          ListTile(
+            key: const Key('open-business-debug-button'),
+            dense: true,
+            leading: const Icon(Icons.bug_report_outlined, color: Color(0xFF386EBB)),
+            title: const Text(
+              '\u4E1A\u52A1\u8C03\u8BD5',
+              style: TextStyle(
+                color: Color(0xFF1F2B3A),
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            subtitle: const Text(
+              '\u8F93\u51FA Token\u3001\u7528\u6237\u3001\u6743\u9650\u3001\u63A8\u9001\u72B6\u6001\uFF0C\u652F\u6301\u9010\u9879\u590D\u5236',
+              style: TextStyle(color: Color(0xFF7A889A), fontSize: 12),
+            ),
+            trailing: const Icon(
+              Icons.chevron_right_rounded,
+              color: Color(0xFF8A97A8),
+            ),
+            onTap: onBusinessDebug,
           ),
         ],
       ),
@@ -589,3 +649,4 @@ class UserProfileViewData {
   final String job;
   final String mobile;
 }
+

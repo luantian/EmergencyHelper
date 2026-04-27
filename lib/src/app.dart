@@ -119,24 +119,47 @@ class _EmergencyHelperAppState extends State<EmergencyHelperApp> {
     _isHandlingAuthExpired = true;
     _dismissTopPushBanner();
     try {
+      final tokenSnapshot = await widget.dependencies.authLocalStore
+          .getAccessToken();
+      if (tokenSnapshot == null || tokenSnapshot.trim().isEmpty) {
+        widget.dependencies.logger.info(
+          'auth expired ignored without local token: path=${event.path}',
+        );
+        widget.dependencies.apiClient.resetAuthExpiredState();
+        return;
+      }
+
+      final stillAuthorized = await widget.dependencies.authService
+          .ensureValidAccessToken(validateWithServer: true)
+          .timeout(
+            const Duration(seconds: 5),
+            onTimeout: () => true,
+          );
+      if (stillAuthorized) {
+        widget.dependencies.logger.info(
+          'stale auth expired ignored: path=${event.path}',
+        );
+        widget.dependencies.apiClient.resetAuthExpiredState();
+        return;
+      }
+
       widget.dependencies.logger.info(
         'global auth expired: path=${event.path}, '
         'http=${event.httpStatusCode ?? "-"}, '
         'biz=${event.businessCode ?? "-"}, '
         'message=${event.message ?? "-"}',
       );
+      widget.dependencies.apiClient.cancelAllPendingRequests(
+        reason: 'AUTH_EXPIRED_FORCE_LOGOUT',
+      );
       EventCenter.instance.resetSessionCache(notify: false);
       RiskCenter.instance.resetSessionData(notify: false);
-      await widget.dependencies.pushService.unbindAlias();
-      await widget.dependencies.pushService.clearBadgeAndNotifications();
-      await TUICallSessionService.instance.logoutSilently(
-        dependencies: widget.dependencies,
-      );
       await widget.dependencies.authLocalStore.clear();
       if (!mounted) {
         return;
       }
       _router.go(RoutePaths.login);
+      unawaited(_runAuthExpiredCleanupInBackground());
     } catch (error, stackTrace) {
       widget.dependencies.logger.error(
         'handle global auth expired failed',
@@ -149,6 +172,27 @@ class _EmergencyHelperAppState extends State<EmergencyHelperApp> {
     } finally {
       _isHandlingAuthExpired = false;
     }
+  }
+
+  Future<void> _runAuthExpiredCleanupInBackground() async {
+    await _runWithTimeout(
+      widget.dependencies.pushService.unbindAlias(),
+      timeout: const Duration(seconds: 2),
+    );
+    await _runWithTimeout(
+      widget.dependencies.pushService.clearBadgeAndNotifications(),
+      timeout: const Duration(seconds: 2),
+    );
+    TUICallSessionService.instance.clearLocalSessionState();
+  }
+
+  Future<void> _runWithTimeout(
+    Future<void> task, {
+    required Duration timeout,
+  }) async {
+    try {
+      await task.timeout(timeout);
+    } catch (_) {}
   }
 
   Future<void> _handleIncomingPush(PushIncomingEvent event) async {
@@ -260,7 +304,7 @@ class _EmergencyHelperAppState extends State<EmergencyHelperApp> {
     final merged = _extractMergedPushPayload(event);
     if (isCallInvite) {
       final callType = _resolveCallTypeLabel(event, merged);
-      return '邀请你进行$callType通话，点击立即接听';
+      return '\u9080\u8BF7\u4F60\u8FDB\u884C$callType\u901A\u8BDD\uFF0C\u70B9\u51FB\u7ACB\u5373\u63A5\u542C\u3002';
     }
     return _pickFirstText(<Object?>[
           merged['content'],
@@ -291,14 +335,13 @@ class _EmergencyHelperAppState extends State<EmergencyHelperApp> {
     ]);
     final normalized = _normalizePushKey(raw ?? '');
     if (normalized.contains('audio') || normalized.contains('voice')) {
-      return '语音';
+      return '\u8BED\u97F3';
     }
     if (normalized.contains('video')) {
-      return '视频';
+      return '\u89C6\u9891';
     }
-    return '视频';
+    return '\u89C6\u9891';
   }
-
   String _normalizePushKey(String value) {
     return value.trim().toLowerCase().replaceAll('-', '_').replaceAll(' ', '');
   }

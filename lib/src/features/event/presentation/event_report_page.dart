@@ -22,6 +22,14 @@ import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 
+const TextStyle _formValueTextStyle = TextStyle(
+  color: Color(0xFF1F2F43),
+  fontSize: 14,
+  fontWeight: FontWeight.w600,
+  fontFamily: 'sans-serif-medium',
+  height: 1.2,
+);
+
 class EventReportPage extends StatefulWidget {
   const EventReportPage({super.key});
 
@@ -139,14 +147,16 @@ class _EventReportPageState extends State<EventReportPage> {
                 child: TextField(
                   controller: _eventNameController,
                   textAlignVertical: TextAlignVertical.center,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF213143),
-                    height: 1.2,
-                  ),
+                  style: _formValueTextStyle,
                   decoration: const InputDecoration(
                     isDense: true,
+                    filled: false,
                     border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    disabledBorder: InputBorder.none,
+                    errorBorder: InputBorder.none,
+                    focusedErrorBorder: InputBorder.none,
                     contentPadding: EdgeInsets.zero,
                     hintText: '\u8BF7\u8F93\u5165\u4E8B\u4EF6\u540D\u79F0',
                     hintStyle: TextStyle(color: Color(0xFFA4A9B0)),
@@ -176,14 +186,16 @@ class _EventReportPageState extends State<EventReportPage> {
                 child: TextField(
                   controller: _descriptionController,
                   textAlignVertical: TextAlignVertical.center,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF213143),
-                    height: 1.2,
-                  ),
+                  style: _formValueTextStyle,
                   decoration: const InputDecoration(
                     isDense: true,
+                    filled: false,
                     border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    disabledBorder: InputBorder.none,
+                    errorBorder: InputBorder.none,
+                    focusedErrorBorder: InputBorder.none,
                     contentPadding: EdgeInsets.zero,
                     hintText: '\u8BF7\u586B\u5199\u4E8B\u4EF6\u6982\u51B5',
                     hintStyle: TextStyle(color: Color(0xFFA4A9B0)),
@@ -455,12 +467,19 @@ class _EventReportPageState extends State<EventReportPage> {
         dropdownColor: const Color(0xFFFBFDFF),
         style: const TextStyle(
           fontSize: 14,
-          color: Color(0xFF213143),
-          fontWeight: FontWeight.w500,
+          color: Color(0xFF1F2F43),
+          fontWeight: FontWeight.w600,
+          fontFamily: 'sans-serif-medium',
         ),
         decoration: const InputDecoration(
           isDense: true,
+          filled: false,
           border: InputBorder.none,
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+          disabledBorder: InputBorder.none,
+          errorBorder: InputBorder.none,
+          focusedErrorBorder: InputBorder.none,
           contentPadding: EdgeInsets.symmetric(vertical: 8),
         ),
         icon: Container(
@@ -469,7 +488,6 @@ class _EventReportPageState extends State<EventReportPage> {
           decoration: BoxDecoration(
             color: const Color(0xFFEAF3FF),
             borderRadius: BorderRadius.circular(7),
-            border: Border.all(color: const Color(0xFFD4E3F5)),
           ),
           alignment: Alignment.center,
           child: const Icon(
@@ -491,6 +509,7 @@ class _EventReportPageState extends State<EventReportPage> {
                       color: Color(0xFF1F2F43),
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
+                      fontFamily: 'sans-serif-medium',
                     ),
                   ),
                 ),
@@ -599,12 +618,16 @@ class _EventReportPageState extends State<EventReportPage> {
           _compressingAttachments = true;
         });
       }
-      ImageAttachmentCompressionResult imageCompressionResult;
+      var imageCompressionResult = ImageAttachmentCompressionResult(
+        files: filesToAppend,
+      );
       VideoAttachmentCompressionResult videoCompressionResult;
       try {
-        imageCompressionResult = await _imageAttachmentCompressor
-            .compressPickedFiles(filesToAppend);
-        filesToAppend = imageCompressionResult.files;
+        if (!isVideoFlow) {
+          imageCompressionResult = await _imageAttachmentCompressor
+              .compressPickedFiles(filesToAppend);
+          filesToAppend = imageCompressionResult.files;
+        }
 
         videoCompressionResult = await _videoAttachmentCompressor
             .compressPickedFiles(filesToAppend);
@@ -620,7 +643,9 @@ class _EventReportPageState extends State<EventReportPage> {
         return;
       }
 
-      if (!isVideoFlow && imageCompressionResult.compressedCount > 0) {
+      if (!isVideoFlow &&
+          imageCompressionResult.hasImageInput &&
+          imageCompressionResult.compressedCount > 0) {
         final summaryParts = <String>[
           '已压缩${imageCompressionResult.compressedCount}张图片',
         ];
@@ -629,10 +654,14 @@ class _EventReportPageState extends State<EventReportPage> {
         }
         _showMessage(summaryParts.join('，'));
       }
-      if (!isVideoFlow && imageCompressionResult.failedCount > 0) {
+      if (!isVideoFlow &&
+          imageCompressionResult.hasImageInput &&
+          imageCompressionResult.failedCount > 0) {
         _showMessage('有${imageCompressionResult.failedCount}张图片压缩失败，已使用原图');
       }
-      if (!isVideoFlow && imageCompressionResult.overSizeCount > 0) {
+      if (!isVideoFlow &&
+          imageCompressionResult.hasImageInput &&
+          imageCompressionResult.overSizeCount > 0) {
         _showMessage(
           '有${imageCompressionResult.overSizeCount}张图片仍超过8MB，建议重新选择后重试',
         );
@@ -1844,12 +1873,12 @@ class _InputBox extends StatelessWidget {
     return Container(
       height: 46,
       padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFD),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFD4DDEA)),
-      ),
       alignment: Alignment.centerLeft,
+      decoration: BoxDecoration(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: const Color(0xFFCDD7E4), width: 1),
+      ),
       child: child,
     );
   }
@@ -1867,7 +1896,7 @@ class _ReadOnlyBox extends StatelessWidget {
         text,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(color: Color(0xFF596779), fontSize: 14),
+        style: _formValueTextStyle,
       ),
     );
   }
@@ -1885,9 +1914,9 @@ class _LocationSelector extends StatelessWidget {
     return Container(
       height: 46,
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFD),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFD4DDEA)),
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: const Color(0xFFCDD7E4), width: 1),
       ),
       child: Row(
         children: [
@@ -1900,9 +1929,11 @@ class _LocationSelector extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: hasValue
-                      ? const Color(0xFF213143)
+                      ? const Color(0xFF1F2F43)
                       : const Color(0xFF95A0AF),
                   fontSize: 14,
+                  fontWeight: hasValue ? FontWeight.w600 : FontWeight.w400,
+                  fontFamily: hasValue ? 'sans-serif-medium' : null,
                 ),
               ),
             ),

@@ -21,6 +21,14 @@ import 'package:image_picker/image_picker.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 
+const TextStyle _formValueTextStyle = TextStyle(
+  color: Color(0xFF1F2F43),
+  fontSize: 14,
+  fontWeight: FontWeight.w600,
+  fontFamily: 'sans-serif-medium',
+  height: 1.2,
+);
+
 class RiskReportPage extends StatefulWidget {
   const RiskReportPage({super.key});
 
@@ -115,14 +123,16 @@ class _RiskReportPageState extends State<RiskReportPage> {
                 child: TextField(
                   controller: _secondaryRiskController,
                   textAlignVertical: TextAlignVertical.center,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF213143),
-                    height: 1.2,
-                  ),
+                  style: _formValueTextStyle,
                   decoration: const InputDecoration(
                     isDense: true,
+                    filled: false,
                     border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    disabledBorder: InputBorder.none,
+                    errorBorder: InputBorder.none,
+                    focusedErrorBorder: InputBorder.none,
                     contentPadding: EdgeInsets.zero,
                     hintText:
                         '\u8BF7\u8F93\u5165\u884D\u751F\u98CE\u9669\u5185\u5BB9',
@@ -145,14 +155,16 @@ class _RiskReportPageState extends State<RiskReportPage> {
                 child: TextField(
                   controller: _descriptionController,
                   textAlignVertical: TextAlignVertical.center,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    color: Color(0xFF213143),
-                    height: 1.2,
-                  ),
+                  style: _formValueTextStyle,
                   decoration: const InputDecoration(
                     isDense: true,
+                    filled: false,
                     border: InputBorder.none,
+                    enabledBorder: InputBorder.none,
+                    focusedBorder: InputBorder.none,
+                    disabledBorder: InputBorder.none,
+                    errorBorder: InputBorder.none,
+                    focusedErrorBorder: InputBorder.none,
                     contentPadding: EdgeInsets.zero,
                     hintText: '\u8BF7\u586B\u5199\u98CE\u9669\u63CF\u8FF0',
                     hintStyle: TextStyle(color: Color(0xFFA4A9B0)),
@@ -435,12 +447,19 @@ class _RiskReportPageState extends State<RiskReportPage> {
         dropdownColor: const Color(0xFFFBFDFF),
         style: const TextStyle(
           fontSize: 14,
-          color: Color(0xFF213143),
-          fontWeight: FontWeight.w500,
+          color: Color(0xFF1F2F43),
+          fontWeight: FontWeight.w600,
+          fontFamily: 'sans-serif-medium',
         ),
         decoration: const InputDecoration(
           isDense: true,
+          filled: false,
           border: InputBorder.none,
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+          disabledBorder: InputBorder.none,
+          errorBorder: InputBorder.none,
+          focusedErrorBorder: InputBorder.none,
           contentPadding: EdgeInsets.symmetric(vertical: 8),
           hintText: '\u8BF7\u9009\u62E9',
         ),
@@ -450,7 +469,6 @@ class _RiskReportPageState extends State<RiskReportPage> {
           decoration: BoxDecoration(
             color: const Color(0xFFEAF3FF),
             borderRadius: BorderRadius.circular(7),
-            border: Border.all(color: const Color(0xFFD4E3F5)),
           ),
           alignment: Alignment.center,
           child: const Icon(
@@ -472,6 +490,7 @@ class _RiskReportPageState extends State<RiskReportPage> {
                       color: Color(0xFF1F2F43),
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
+                      fontFamily: 'sans-serif-medium',
                     ),
                   ),
                 ),
@@ -522,12 +541,19 @@ class _RiskReportPageState extends State<RiskReportPage> {
         dropdownColor: const Color(0xFFFBFDFF),
         style: const TextStyle(
           fontSize: 14,
-          color: Color(0xFF213143),
-          fontWeight: FontWeight.w500,
+          color: Color(0xFF1F2F43),
+          fontWeight: FontWeight.w600,
+          fontFamily: 'sans-serif-medium',
         ),
         decoration: const InputDecoration(
           isDense: true,
+          filled: false,
           border: InputBorder.none,
+          enabledBorder: InputBorder.none,
+          focusedBorder: InputBorder.none,
+          disabledBorder: InputBorder.none,
+          errorBorder: InputBorder.none,
+          focusedErrorBorder: InputBorder.none,
           contentPadding: EdgeInsets.symmetric(vertical: 8),
         ),
         icon: Container(
@@ -536,7 +562,6 @@ class _RiskReportPageState extends State<RiskReportPage> {
           decoration: BoxDecoration(
             color: const Color(0xFFEAF3FF),
             borderRadius: BorderRadius.circular(7),
-            border: Border.all(color: const Color(0xFFD4E3F5)),
           ),
           alignment: Alignment.center,
           child: const Icon(
@@ -558,6 +583,7 @@ class _RiskReportPageState extends State<RiskReportPage> {
                       color: Color(0xFF1F2F43),
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
+                      fontFamily: 'sans-serif-medium',
                     ),
                   ),
                 ),
@@ -666,12 +692,16 @@ class _RiskReportPageState extends State<RiskReportPage> {
           _compressingAttachments = true;
         });
       }
-      ImageAttachmentCompressionResult imageCompressionResult;
+      var imageCompressionResult = ImageAttachmentCompressionResult(
+        files: filesToAppend,
+      );
       VideoAttachmentCompressionResult videoCompressionResult;
       try {
-        imageCompressionResult = await _imageAttachmentCompressor
-            .compressPickedFiles(filesToAppend);
-        filesToAppend = imageCompressionResult.files;
+        if (!isVideoFlow) {
+          imageCompressionResult = await _imageAttachmentCompressor
+              .compressPickedFiles(filesToAppend);
+          filesToAppend = imageCompressionResult.files;
+        }
 
         videoCompressionResult = await _videoAttachmentCompressor
             .compressPickedFiles(filesToAppend);
@@ -687,7 +717,9 @@ class _RiskReportPageState extends State<RiskReportPage> {
         return;
       }
 
-      if (!isVideoFlow && imageCompressionResult.compressedCount > 0) {
+      if (!isVideoFlow &&
+          imageCompressionResult.hasImageInput &&
+          imageCompressionResult.compressedCount > 0) {
         final summaryParts = <String>[
           '已压缩${imageCompressionResult.compressedCount}张图片',
         ];
@@ -696,10 +728,14 @@ class _RiskReportPageState extends State<RiskReportPage> {
         }
         _showMessage(summaryParts.join('，'));
       }
-      if (!isVideoFlow && imageCompressionResult.failedCount > 0) {
+      if (!isVideoFlow &&
+          imageCompressionResult.hasImageInput &&
+          imageCompressionResult.failedCount > 0) {
         _showMessage('有${imageCompressionResult.failedCount}张图片压缩失败，已使用原图');
       }
-      if (!isVideoFlow && imageCompressionResult.overSizeCount > 0) {
+      if (!isVideoFlow &&
+          imageCompressionResult.hasImageInput &&
+          imageCompressionResult.overSizeCount > 0) {
         _showMessage(
           '有${imageCompressionResult.overSizeCount}张图片仍超过8MB，建议裁剪后重试',
         );
@@ -1323,7 +1359,6 @@ class _RiskBaiduMapPickerSheetState extends State<_RiskBaiduMapPickerSheet> {
   String _statusText = '正在定位当前位置...';
   bool _resolvingAddress = false;
   bool _locating = false;
-  String? _selectedMarkerId;
 
   @override
   void initState() {
@@ -1333,12 +1368,6 @@ class _RiskBaiduMapPickerSheetState extends State<_RiskBaiduMapPickerSheet> {
 
   @override
   void dispose() {
-    final markerId = _selectedMarkerId;
-    final controller = _mapController;
-    if (controller != null && markerId != null && markerId.isNotEmpty) {
-      unawaited(controller.removeOverlay(markerId));
-    }
-    _selectedMarkerId = null;
     _mapController = null;
     if (Platform.isAndroid) {
       unawaited(_locationPlugin.stopLocation());
@@ -1468,10 +1497,6 @@ class _RiskBaiduMapPickerSheetState extends State<_RiskBaiduMapPickerSheet> {
     controller.setMapDidLoadCallback(
       callback: () {
         unawaited(_centerMapTo(_mapCenter, animate: false));
-        final selected = _selectedCoordinate;
-        if (selected != null) {
-          unawaited(_refreshSelectedMarker(selected));
-        }
       },
     );
 
@@ -1508,33 +1533,6 @@ class _RiskBaiduMapPickerSheetState extends State<_RiskBaiduMapPickerSheet> {
     );
   }
 
-  Future<void> _refreshSelectedMarker(BMFCoordinate coordinate) async {
-    final controller = _mapController;
-    if (controller == null) {
-      return;
-    }
-
-    final oldMarkerId = _selectedMarkerId;
-    if (oldMarkerId != null) {
-      await controller.removeOverlay(oldMarkerId);
-    }
-
-    final marker = BMFMarker.icon(
-      icon: 'assets/images/marker.png',
-      position: coordinate,
-      title: '已选位置',
-      canShowCallout: false,
-      draggable: false,
-    );
-
-    final success = await controller.addMarker(marker);
-    if (success && mounted) {
-      setState(() {
-        _selectedMarkerId = marker.id;
-      });
-    }
-  }
-
   void _onCoordinatePicked(BMFCoordinate coordinate, {String? addressHint}) {
     final trimmedHint = addressHint?.trim() ?? '';
     setState(() {
@@ -1544,7 +1542,6 @@ class _RiskBaiduMapPickerSheetState extends State<_RiskBaiduMapPickerSheet> {
       _resolvingAddress = trimmedHint.isEmpty;
     });
 
-    unawaited(_refreshSelectedMarker(coordinate));
     unawaited(_centerMapTo(coordinate, animate: true));
 
     if (trimmedHint.isNotEmpty) {
@@ -1914,12 +1911,12 @@ class _InputBox extends StatelessWidget {
     return Container(
       height: 46,
       padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFD),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFD4DDEA)),
-      ),
       alignment: Alignment.centerLeft,
+      decoration: BoxDecoration(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: const Color(0xFFCDD7E4), width: 1),
+      ),
       child: child,
     );
   }
@@ -1937,7 +1934,7 @@ class _ReadOnlyBox extends StatelessWidget {
         text,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(color: Color(0xFF596779), fontSize: 14),
+        style: _formValueTextStyle,
       ),
     );
   }
@@ -1955,9 +1952,9 @@ class _LocationSelector extends StatelessWidget {
     return Container(
       height: 46,
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFD),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFD4DDEA)),
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(9),
+        border: Border.all(color: const Color(0xFFCDD7E4), width: 1),
       ),
       child: Row(
         children: [
@@ -1970,9 +1967,11 @@ class _LocationSelector extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: hasValue
-                      ? const Color(0xFF213143)
+                      ? const Color(0xFF1F2F43)
                       : const Color(0xFF95A0AF),
                   fontSize: 14,
+                  fontWeight: hasValue ? FontWeight.w600 : FontWeight.w400,
+                  fontFamily: hasValue ? 'sans-serif-medium' : null,
                 ),
               ),
             ),

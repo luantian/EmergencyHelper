@@ -316,34 +316,46 @@ class _ContactsTabPageState extends State<ContactsTabPage> {
     }
 
     final apiClient = context.read<AppDependencies>().apiClient;
-    String rawPhone;
+    final localPhoneRaw = contact.phone.trim();
+    String remotePhoneRaw = '';
+    String? queryErrorMessage;
     try {
       final remotePhone = await fetchUserPhoneById(apiClient, userId);
-      rawPhone = (remotePhone ?? '').trim();
+      remotePhoneRaw = (remotePhone ?? '').trim();
     } on AppException catch (error) {
-      _showSnackBar(
-        '\u67E5\u8BE2\u7535\u8BDD\u5931\u8D25\uFF1A${error.message}',
-      );
-      return;
+      queryErrorMessage = error.message;
     } catch (_) {
-      _showSnackBar(
-        '\u67E5\u8BE2\u7535\u8BDD\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5',
-      );
-      return;
+      queryErrorMessage =
+          '\u67E5\u8BE2\u7535\u8BDD\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5';
     }
 
-    final phone = _normalizeDialPhone(rawPhone);
+    // Keep the required flow: query detail endpoint first.
+    // If detail endpoint has no phone/invalid phone, fallback to local contact data.
+    final remoteDialPhone = _normalizeDialPhone(remotePhoneRaw);
+    final localDialPhone = _normalizeDialPhone(localPhoneRaw);
+    final phone = remoteDialPhone ?? localDialPhone;
     if (phone == null) {
-      final hasPhoneText =
-          rawPhone.isNotEmpty &&
-          rawPhone != '--' &&
-          rawPhone.toLowerCase() != 'null';
+      final hasRemoteText =
+          remotePhoneRaw.isNotEmpty &&
+          remotePhoneRaw != '--' &&
+          remotePhoneRaw.toLowerCase() != 'null';
+      final hasLocalText =
+          localPhoneRaw.isNotEmpty &&
+          localPhoneRaw != '--' &&
+          localPhoneRaw.toLowerCase() != 'null';
       _showSnackBar(
-        hasPhoneText
+        hasRemoteText || hasLocalText
             ? '\u67E5\u8BE2\u5230\u7684\u53F7\u7801\u4E0D\u53EF\u62E8\u6253\uFF0C\u8BF7\u6838\u5BF9\u53F7\u7801\u683C\u5F0F'
             : '\u8BE5\u8054\u7CFB\u4EBA\u672A\u914D\u7F6E\u8054\u7CFB\u7535\u8BDD',
       );
       return;
+    }
+    if (queryErrorMessage != null &&
+        remoteDialPhone == null &&
+        localDialPhone != null) {
+      _showSnackBar(
+        '\u8BE6\u60C5\u67E5\u53F7\u5F02\u5E38\uFF0C\u5DF2\u4F7F\u7528\u901A\u8BAF\u5F55\u53F7\u7801',
+      );
     }
 
     final confirmed = await _confirmDial(contact.name, phone);
@@ -432,54 +444,144 @@ class _ContactsTabPageState extends State<ContactsTabPage> {
   Future<_CallType?> _showCallTypeDialog() async {
     return showDialog<_CallType>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('选择通话类型'),
-        content: const Text(
-          '单人：与当前联系人 1 对 1 通话\n'
-          '多人：选择多位成员后群呼',
-        ),
-        actionsPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        actions: [
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () =>
-                      Navigator.of(dialogContext).pop(_CallType.single),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    side: const BorderSide(color: AppTheme.primaryBlue),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  child: const Text('单人视频通话'),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: () =>
-                      Navigator.of(dialogContext).pop(_CallType.multi),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    backgroundColor: AppTheme.primaryBlue,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  child: const Text('多人视频通话'),
-                ),
-              ),
-            ],
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        final maxHeight = MediaQuery.of(dialogContext).size.height * 0.72;
+        return Dialog(
+          elevation: 0,
+          backgroundColor: Colors.transparent,
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 18,
+            vertical: 24,
           ),
-        ],
-      ),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: 430, maxHeight: maxHeight),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: const <BoxShadow>[
+                    BoxShadow(
+                      color: Color(0x2B1B3556),
+                      blurRadius: 26,
+                      offset: Offset(0, 10),
+                    ),
+                  ],
+                ),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: <Widget>[
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(14),
+                          gradient: const LinearGradient(
+                            colors: <Color>[
+                              Color(0xFF4E99F1),
+                              Color(0xFF2B73CC),
+                            ],
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                          ),
+                        ),
+                        child: Row(
+                          children: const <Widget>[
+                            CircleAvatar(
+                              radius: 16,
+                              backgroundColor: Color(0x40FFFFFF),
+                              child: Icon(
+                                Icons.video_call_rounded,
+                                color: Colors.white,
+                                size: 20,
+                              ),
+                            ),
+                            SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                '选择通话类型',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      const Text(
+                        '请选择本次通话方式',
+                        style: TextStyle(
+                          color: Color(0xFF1F2B3A),
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        '单人适合一对一沟通，多人可邀请多位成员参会',
+                        style: TextStyle(
+                          color: Color(0xFF6E7D90),
+                          fontSize: 12.5,
+                          height: 1.35,
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      _CallTypeChoiceCard(
+                        icon: Icons.person_rounded,
+                        title: '单人视频通话',
+                        subtitle: '与当前联系人 1 对 1 沟通',
+                        accentColor: const Color(0xFF3F86E3),
+                        onTap: () =>
+                            Navigator.of(dialogContext).pop(_CallType.single),
+                      ),
+                      const SizedBox(height: 10),
+                      _CallTypeChoiceCard(
+                        icon: Icons.groups_rounded,
+                        title: '多人视频通话',
+                        subtitle: '选择多位成员后发起群呼',
+                        accentColor: const Color(0xFF2B73CC),
+                        onTap: () =>
+                            Navigator.of(dialogContext).pop(_CallType.multi),
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: TextButton(
+                          onPressed: () => Navigator.of(dialogContext).pop(),
+                          style: TextButton.styleFrom(
+                            foregroundColor: const Color(0xFF7A8798),
+                            padding: const EdgeInsets.symmetric(vertical: 10),
+                          ),
+                          child: const Text(
+                            '取消',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
-  Future<void> _pickMultiMembersAndCall(List<_ContactInfo> initialContacts) async {
+  Future<void> _pickMultiMembersAndCall(
+    List<_ContactInfo> initialContacts,
+  ) async {
     final selectedIds = initialContacts
         .map((c) => int.tryParse(c.userId))
         .whereType<int>()
@@ -537,7 +639,10 @@ class _ContactsTabPageState extends State<ContactsTabPage> {
       return;
     }
 
-    final userIds = contacts.map((c) => c.userId.trim()).where((id) => id.isNotEmpty).toList();
+    final userIds = contacts
+        .map((c) => c.userId.trim())
+        .where((id) => id.isNotEmpty)
+        .toList();
     final names = contacts.map((c) => c.name.trim()).toList();
     final titles = contacts.map((c) => c.title.trim()).toList();
     final departments = contacts.map((c) => c.department.trim()).toList();
@@ -627,44 +732,8 @@ class _ContactsTabPageState extends State<ContactsTabPage> {
     }
     final result = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('\u786E\u8BA4\u62E8\u6253'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                name,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                phone,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.w800,
-                  letterSpacing: 0.8,
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('\u53D6\u6D88'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('\u62E8\u6253'),
-            ),
-          ],
-        );
-      },
+      barrierDismissible: true,
+      builder: (dialogContext) => _DialConfirmDialog(name: name, phone: phone),
     );
     return result ?? false;
   }
@@ -1201,6 +1270,288 @@ class _EmptySearchResult extends StatelessWidget {
   }
 }
 
+class _CallTypeChoiceCard extends StatelessWidget {
+  const _CallTypeChoiceCard({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.accentColor,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color accentColor;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Ink(
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: const Color(0xFFF8FBFF),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: const Color(0xFFD6E3F5)),
+          ),
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+          child: Row(
+            children: <Widget>[
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: accentColor.withValues(alpha: 0.13),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: accentColor, size: 20),
+              ),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Color(0xFF1E2A39),
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: Color(0xFF738195),
+                        fontSize: 12.2,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.arrow_forward_ios_rounded,
+                size: 14,
+                color: accentColor,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DialConfirmDialog extends StatelessWidget {
+  const _DialConfirmDialog({required this.name, required this.phone});
+
+  final String name;
+  final String phone;
+
+  @override
+  Widget build(BuildContext context) {
+    final maxHeight = MediaQuery.of(context).size.height * 0.72;
+    return Dialog(
+      elevation: 0,
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(maxWidth: 430, maxHeight: maxHeight),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: const <BoxShadow>[
+                BoxShadow(
+                  color: Color(0x2B1B3556),
+                  blurRadius: 26,
+                  offset: Offset(0, 10),
+                ),
+              ],
+            ),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(14),
+                      gradient: const LinearGradient(
+                        colors: <Color>[Color(0xFF4E99F1), Color(0xFF2B73CC)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                    ),
+                    child: Row(
+                      children: const <Widget>[
+                        CircleAvatar(
+                          radius: 16,
+                          backgroundColor: Color(0x40FFFFFF),
+                          child: Icon(
+                            Icons.call_rounded,
+                            color: Colors.white,
+                            size: 19,
+                          ),
+                        ),
+                        SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            '确认拨打电话',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 17,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FBFF),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFFD6E3F5)),
+                    ),
+                    child: Row(
+                      children: <Widget>[
+                        Container(
+                          width: 42,
+                          height: 42,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFE5F1FF),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          alignment: Alignment.center,
+                          child: Text(
+                            _safeFirstChar(name, fallback: '联'),
+                            style: const TextStyle(
+                              color: Color(0xFF2C6EC4),
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: <Widget>[
+                              Text(
+                                name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Color(0xFF1F2B3A),
+                                  fontSize: 15.5,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                              const Text(
+                                '即将发起系统电话呼叫',
+                                style: TextStyle(
+                                  color: Color(0xFF7A889A),
+                                  fontSize: 12.2,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF4F9FF),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFFD3E6FC)),
+                    ),
+                    child: Text(
+                      phone,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Color(0xFF153E73),
+                        fontSize: 30,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.9,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: <Widget>[
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: () => Navigator.of(context).pop(false),
+                          style: OutlinedButton.styleFrom(
+                            minimumSize: const Size.fromHeight(42),
+                            side: const BorderSide(color: Color(0xFFD3DCE8)),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          child: const Text(
+                            '取消',
+                            style: TextStyle(
+                              color: Color(0xFF5E6E82),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: () => Navigator.of(context).pop(true),
+                          style: ElevatedButton.styleFrom(
+                            minimumSize: const Size.fromHeight(42),
+                            backgroundColor: const Color(0xFF2B73CC),
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            elevation: 0,
+                          ),
+                          icon: const Icon(Icons.call_rounded, size: 18),
+                          label: const Text(
+                            '立即拨打',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 String _safeFirstChar(String text, {String fallback = '?'}) {
   final normalized = text.trim();
   if (normalized.isEmpty) {
@@ -1539,12 +1890,24 @@ Future<String?> fetchUserPhoneById(ApiClient apiClient, String userId) async {
           '\u7528\u6237\u8BE6\u60C5\u52A0\u8F7D\u5931\u8D25',
     );
   }
-  final data = response['data'];
-  if (data is! Map) {
-    return null;
+  final candidates = <Object?>[
+    response['data'],
+    _asMap(response['data'])?['data'],
+    _asMap(response['data'])?['user'],
+    response['result'],
+  ];
+
+  for (final candidate in candidates) {
+    final map = _asMap(candidate);
+    if (map == null) {
+      continue;
+    }
+    final phone = _extractPhoneFromUserMap(map);
+    if (phone != null) {
+      return phone;
+    }
   }
-  final userMap = data.map((key, value) => MapEntry(key.toString(), value));
-  return _extractPhoneFromUserMap(userMap);
+  return null;
 }
 
 ContactGroup _toContactGroup(_MutableGroup source) {

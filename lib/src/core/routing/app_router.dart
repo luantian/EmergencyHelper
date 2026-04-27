@@ -12,6 +12,7 @@ import 'package:emergency_helper/src/features/home/data/notify_message_service.d
 import 'package:emergency_helper/src/features/home/presentation/home_page.dart';
 import 'package:emergency_helper/src/features/home/presentation/message_detail_page.dart';
 import 'package:emergency_helper/src/features/key_point/presentation/key_point_page.dart';
+import 'package:emergency_helper/src/features/push/presentation/business_debug_page.dart';
 import 'package:emergency_helper/src/features/push/presentation/push_debug_page.dart';
 import 'package:emergency_helper/src/features/risk/presentation/risk_detail_page.dart';
 import 'package:emergency_helper/src/features/risk/presentation/risk_feedback_page.dart';
@@ -154,6 +155,10 @@ class AppRouter {
         GoRoute(
           path: RoutePaths.pushDebug,
           builder: (context, state) => const PushDebugPage(),
+        ),
+        GoRoute(
+          path: RoutePaths.businessDebug,
+          builder: (context, state) => const BusinessDebugPage(),
         ),
         GoRoute(
           path: RoutePaths.trtcCallNew,

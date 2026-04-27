@@ -11,7 +11,6 @@ import 'package:emergency_helper/src/core/widgets/app_center_toast.dart';
 import 'package:emergency_helper/src/core/widgets/app_loading_overlay.dart';
 import 'package:emergency_helper/src/features/event/data/event_center.dart';
 import 'package:emergency_helper/src/features/risk/data/risk_center.dart';
-import 'package:emergency_helper/src/features/trtc/data/tuicall_session_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:getwidget/getwidget.dart';
@@ -53,7 +52,7 @@ class _LoginPageState extends State<LoginPage> {
       backgroundColor: const Color(0xFFF2F4F8),
       body: AppLoadingOverlay(
         loading: _submitting,
-        message: '\u767B\u5F55\u4E2D...',
+        message: '\u767b\u5f55\u4e2d...',
         child: SafeArea(
           child: Center(
             child: SingleChildScrollView(
@@ -78,7 +77,7 @@ class _LoginPageState extends State<LoginPage> {
                     children: <Widget>[
                       const Center(
                         child: Text(
-                          '登录',
+                          '\u767b\u5f55',
                           style: TextStyle(
                             fontSize: 28,
                             fontWeight: FontWeight.w700,
@@ -111,8 +110,8 @@ class _LoginPageState extends State<LoginPage> {
                       _LoginInput(
                         key: const Key('login-account-input'),
                         controller: _accountController,
-                        label: '账号',
-                        hintText: '请输入用户名',
+                        label: '\u8d26\u53f7',
+                        hintText: '\u8bf7\u8f93\u5165\u8d26\u53f7',
                         prefixIcon: Icons.person_outline,
                         enabled: !_submitting,
                       ),
@@ -120,8 +119,8 @@ class _LoginPageState extends State<LoginPage> {
                       _LoginInput(
                         key: const Key('login-password-input'),
                         controller: _passwordController,
-                        label: '密码',
-                        hintText: '请输入密码',
+                        label: '\u5bc6\u7801',
+                        hintText: '\u8bf7\u8f93\u5165\u5bc6\u7801',
                         prefixIcon: Icons.lock_outline,
                         obscureText: _obscurePassword,
                         enabled: !_submitting,
@@ -144,7 +143,9 @@ class _LoginPageState extends State<LoginPage> {
                       GFButton(
                         key: const Key('login-submit-button'),
                         onPressed: _submitting ? null : _onLogin,
-                        text: _submitting ? '登录中...' : '立即登录',
+                        text: _submitting
+                            ? '\u767b\u5f55\u4e2d...'
+                            : '\u7acb\u5373\u767b\u5f55',
                         textStyle: const TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.w600,
@@ -169,7 +170,7 @@ class _LoginPageState extends State<LoginPage> {
                                   },
                           ),
                           const Text(
-                            '记住账号',
+                            '\u8bb0\u4f4f\u8d26\u53f7',
                             style: TextStyle(color: Color(0xFF667085)),
                           ),
                         ],
@@ -192,19 +193,19 @@ class _LoginPageState extends State<LoginPage> {
                               crossAxisAlignment: WrapCrossAlignment.center,
                               children: <Widget>[
                                 Text(
-                                  '我已阅读并同意',
+                                  '\u6211\u5df2\u9605\u8bfb\u5e76\u540c\u610f',
                                   style: TextStyle(color: Color(0xFF667085)),
                                 ),
                                 Text(
-                                  '《隐私政策》',
+                                  '\u300a\u7528\u6237\u534f\u8bae\u300b',
                                   style: TextStyle(color: Color(0xFFD23C3C)),
                                 ),
                                 Text(
-                                  '与',
+                                  '\u548c',
                                   style: TextStyle(color: Color(0xFF667085)),
                                 ),
                                 Text(
-                                  '《用户协议》',
+                                  '\u300a\u9690\u79c1\u653f\u7b56\u300b',
                                   style: TextStyle(color: Color(0xFFD23C3C)),
                                 ),
                               ],
@@ -225,18 +226,18 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _onLogin() async {
     if (!_agree) {
-      _showMessage('请先勾选协议');
+      _showMessage('\u8bf7\u5148\u52fe\u9009\u540c\u610f\u534f\u8bae');
       return;
     }
 
     final username = _accountController.text.trim();
     final password = _passwordController.text.trim();
     if (username.isEmpty) {
-      _showMessage('请输入账号');
+      _showMessage('\u8bf7\u8f93\u5165\u8d26\u53f7');
       return;
     }
     if (password.isEmpty) {
-      _showMessage('请输入密码');
+      _showMessage('\u8bf7\u8f93\u5165\u5bc6\u7801');
       return;
     }
 
@@ -272,23 +273,23 @@ class _LoginPageState extends State<LoginPage> {
       );
       EventCenter.instance.resetSessionCache(notify: false);
       RiskCenter.instance.resetSessionData(notify: false);
-      unawaited(_ensureCallSessionInBackground(dependencies));
-      unawaited(
-        _bindPushAliasInBackground(
-          dependencies: dependencies,
-          permissionInfo: loginResult.permissionInfo,
-        ),
-      );
 
       if (!mounted) {
         return;
       }
       AppFeaturePermissionResolver.instance.clearCache();
       context.go(RoutePaths.home);
+
+      unawaited(
+        _runPostLoginBackgroundJobs(
+          dependencies: dependencies,
+          permissionInfo: loginResult.permissionInfo,
+        ),
+      );
     } on AppException catch (error) {
       _showMessage(error.message);
     } catch (_) {
-      _showMessage('登录失败，请稍后重试');
+      _showMessage('\u767b\u5f55\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5');
     } finally {
       if (mounted) {
         setState(() {
@@ -296,6 +297,19 @@ class _LoginPageState extends State<LoginPage> {
         });
       }
     }
+  }
+
+  Future<void> _runPostLoginBackgroundJobs({
+    required AppDependencies dependencies,
+    required Map<String, dynamic> permissionInfo,
+  }) async {
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    unawaited(
+      _bindPushAliasInBackground(
+        dependencies: dependencies,
+        permissionInfo: permissionInfo,
+      ),
+    );
   }
 
   bool _isFlutterTestEnv() {
@@ -343,40 +357,6 @@ class _LoginPageState extends State<LoginPage> {
           permissionInfo,
         );
       } catch (_) {}
-    }
-  }
-
-  Future<void> _ensureCallSessionInBackground(
-    AppDependencies dependencies,
-  ) async {
-    try {
-      dependencies.logger.debug(
-        '[PUSH-DEBUG] login: _ensureCallSessionInBackground started',
-      );
-      final result = await TUICallSessionService.instance.ensureLoggedIn(
-        dependencies: dependencies,
-      );
-      final sdkAppId = TUICallSessionService.instance.activeSdkAppId;
-      dependencies.logger.debug(
-        '[PUSH-DEBUG] login: ensureLoggedIn result=${result.success}, '
-        'hasSdkAppId=${sdkAppId != null && sdkAppId > 0}',
-      );
-      if (result.success) {
-        if (sdkAppId != null && sdkAppId > 0) {
-          dependencies.logger.debug(
-            '[PUSH-DEBUG] login: calling notifyIMLoggedIn',
-          );
-          await dependencies.pushService.notifyIMLoggedIn(sdkAppId);
-          dependencies.logger.debug(
-            '[PUSH-DEBUG] login: notifyIMLoggedIn completed',
-          );
-        }
-      }
-    } catch (e) {
-      dependencies.logger.error(
-        '[PUSH-DEBUG] login: _ensureCallSessionInBackground failed',
-        error: e,
-      );
     }
   }
 

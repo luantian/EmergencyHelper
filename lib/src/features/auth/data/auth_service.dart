@@ -1,4 +1,4 @@
-﻿import 'package:dio/dio.dart';
+import 'package:dio/dio.dart';
 import 'package:emergency_helper/src/core/constants/app_constants.dart';
 import 'package:emergency_helper/src/core/errors/app_exception.dart';
 import 'package:emergency_helper/src/core/logging/app_logger.dart';
@@ -93,7 +93,7 @@ class AuthService {
     return true;
   }
 
-  Future<void> logout() async {
+  Future<void> logout({bool clearLocalSession = true}) async {
     final token = await _localStore.getAccessToken();
     if (token != null && token.trim().isNotEmpty) {
       try {
@@ -109,8 +109,10 @@ class AuthService {
         );
       }
     }
-    await _localStore.clear();
-    _apiClient.resetAuthExpiredState();
+    if (clearLocalSession) {
+      await _localStore.clear();
+      _apiClient.resetAuthExpiredState();
+    }
   }
 
   Future<Map<String, dynamic>?> getCachedPermissionInfo() {
@@ -188,7 +190,7 @@ class AuthService {
     final oldText = oldPassword.trim();
     final newText = newPassword.trim();
     if (oldText.isEmpty || newText.isEmpty) {
-      throw AppException('请输入完整的密码信息');
+      throw AppException('\u8BF7\u8F93\u5165\u5B8C\u6574\u7684\u5BC6\u7801\u4FE1\u606F');
     }
 
     final response = await _apiClient.putJson(
@@ -207,7 +209,7 @@ class AuthService {
     if (message.isNotEmpty) {
       throw AppException(message);
     }
-    throw AppException('修改密码失败，请稍后重试');
+    throw AppException('\u4FEE\u6539\u5BC6\u7801\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5');
   }
 
   Future<AuthLoginResult> _refreshByRefreshToken(String refreshToken) async {
@@ -546,8 +548,3 @@ class _AuthTokenPayload {
   final String? refreshToken;
   final int? expiresTimeMs;
 }
-
-
-
-
-

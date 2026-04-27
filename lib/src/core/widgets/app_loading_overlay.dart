@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:emergency_helper/src/core/theme/app_theme.dart';
 
 class AppLoadingOverlay extends StatelessWidget {
   const AppLoadingOverlay({
     required this.child,
     required this.loading,
     this.message = '\u52A0\u8F7D\u4E2D...',
-    this.barrierColor = const Color(0x66000000),
+    this.barrierColor = const Color(0x5E0F1724),
     super.key,
   });
 
@@ -30,35 +31,39 @@ class AppLoadingOverlay extends StatelessWidget {
               decoration: BoxDecoration(color: barrierColor),
               child: Center(
                 child: Container(
-                  constraints: const BoxConstraints(minWidth: 136),
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+                  constraints: const BoxConstraints(minWidth: 152),
+                  padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
                   decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
+                    color: AppTheme.surfaceWhite,
+                    borderRadius: BorderRadius.circular(AppTheme.radiusXl),
+                    border: Border.all(color: const Color(0x14000000)),
                     boxShadow: const <BoxShadow>[
                       BoxShadow(
-                        color: Color(0x26000000),
-                        blurRadius: 18,
-                        offset: Offset(0, 6),
+                        color: Color(0x2E000000),
+                        blurRadius: 20,
+                        offset: Offset(0, 10),
                       ),
                     ],
                   ),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
-                      const SizedBox(
+                      SizedBox(
                         width: 28,
                         height: 28,
-                        child: CircularProgressIndicator(strokeWidth: 2.8),
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.8,
+                          color: AppTheme.primaryBlue,
+                        ),
                       ),
                       if (message.trim().isNotEmpty) ...<Widget>[
-                        const SizedBox(height: 10),
+                        const SizedBox(height: 11),
                         Text(
                           message,
                           style: const TextStyle(
-                            color: Color(0xFF3D4653),
+                            color: AppTheme.textPrimary,
                             fontSize: 13,
-                            fontWeight: FontWeight.w500,
+                            fontWeight: FontWeight.w600,
                           ),
                         ),
                       ],

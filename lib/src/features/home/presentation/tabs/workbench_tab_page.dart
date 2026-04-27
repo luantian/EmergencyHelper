@@ -12,6 +12,9 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 
+// UI preview switch: show all workbench entries regardless of backend permission.
+const bool _previewShowAllWorkbenchActions = true;
+
 class WorkbenchTabPage extends StatefulWidget {
   const WorkbenchTabPage({super.key});
 
@@ -61,7 +64,7 @@ class _WorkbenchTabPageState extends State<WorkbenchTabPage> {
             child: ListView(
               key: const Key('workbench-root'),
               physics: const AlwaysScrollableScrollPhysics(),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              padding: AppTheme.pagePadding,
               children: <Widget>[
                 KeyedSubtree(
                   key: ValueKey<String>('weather-$_refreshNonce'),
@@ -142,15 +145,22 @@ class _WeatherSummaryTileState extends State<_WeatherSummaryTile> {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: () => context.push(RoutePaths.weatherInfo),
-      borderRadius: BorderRadius.circular(6),
+      borderRadius: BorderRadius.circular(AppTheme.radiusMd),
       child: Container(
         key: const Key('open-weather-info-button'),
         decoration: BoxDecoration(
-          color: const Color(0xFFF8F8F8),
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: const Color(0xFFE0E0E0)),
+          color: AppTheme.surfaceWhite,
+          borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+          border: Border.all(color: const Color(0xFFDCE3EC)),
+          boxShadow: const <BoxShadow>[
+            BoxShadow(
+              color: Color(0x14000000),
+              blurRadius: 10,
+              offset: Offset(0, 4),
+            ),
+          ],
         ),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: FutureBuilder<WeatherSnapshot>(
           future: _future,
           builder: (context, snapshot) {
@@ -163,9 +173,9 @@ class _WeatherSummaryTileState extends State<_WeatherSummaryTile> {
                 Text(
                   bannerData.currentTempText,
                   style: const TextStyle(
-                    color: Color(0xFF4C555F),
-                    fontSize: 28,
-                    fontWeight: FontWeight.w500,
+                    color: AppTheme.textPrimary,
+                    fontSize: 26,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -473,9 +483,17 @@ class _WarningCardState extends State<_WarningCard> {
         return Container(
           decoration: BoxDecoration(
             color: warningData.cardColor,
-            borderRadius: BorderRadius.circular(4),
+            borderRadius: BorderRadius.circular(AppTheme.radiusMd),
+            border: Border.all(color: const Color(0x14FFFFFF)),
+            boxShadow: const <BoxShadow>[
+              BoxShadow(
+                color: Color(0x14000000),
+                blurRadius: 10,
+                offset: Offset(0, 4),
+              ),
+            ],
           ),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
           child: Row(
             children: <Widget>[
               _WarningIcon(
@@ -491,17 +509,18 @@ class _WarningCardState extends State<_WarningCard> {
                     Text(
                       warningData.title,
                       style: const TextStyle(
-                        fontSize: 20,
+                        fontSize: 18,
                         fontWeight: FontWeight.w600,
-                        color: Color(0xFF545B64),
+                        color: AppTheme.textPrimary,
                       ),
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 4),
                     Text(
                       '${warningData.timeText}  ·  ${warningData.sourceLabel}',
                       style: const TextStyle(
-                        fontSize: 13,
-                        color: Color(0xFF6E747D),
+                        fontSize: 12.5,
+                        color: AppTheme.textSecondary,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
                   ],
@@ -532,13 +551,13 @@ class _WarningIcon extends StatelessWidget {
     final hasAsset =
         normalizedIconAsset != null && normalizedIconAsset.isNotEmpty;
     return Container(
-      width: 48,
-      height: 48,
+      width: 46,
+      height: 46,
       decoration: BoxDecoration(
         color: hasAsset
             ? backgroundColor.withValues(alpha: 0.18)
             : backgroundColor,
-        borderRadius: BorderRadius.circular(2),
+        borderRadius: BorderRadius.circular(AppTheme.radiusSm),
       ),
       alignment: Alignment.center,
       child: hasAsset
@@ -918,7 +937,9 @@ class _ActionGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final visibleItems = permission == null
+    final visibleItems = _previewShowAllWorkbenchActions
+        ? _items
+        : permission == null
         ? _items
         : _items
               .where((item) => _isAllowed(permission!, item.type))
@@ -959,7 +980,11 @@ class _ActionGrid extends StatelessWidget {
                 (item) => SizedBox(
                   width: itemWidth,
                   height: 82,
-                  child: _ActionCard(item: item, enabled: permission != null),
+                  child: _ActionCard(
+                    item: item,
+                    enabled:
+                        _previewShowAllWorkbenchActions || permission != null,
+                  ),
                 ),
               )
               .toList(),

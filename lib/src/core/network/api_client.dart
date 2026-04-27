@@ -55,6 +55,15 @@ class ApiClient {
   Stream<ApiAuthExpiredEvent> get authExpiredStream =>
       _authExpiredController.stream;
 
+  void cancelAllPendingRequests({String reason = 'MANUAL_CANCEL'}) {
+    for (final token in _activeCancelTokens.toList(growable: false)) {
+      if (!token.isCancelled) {
+        token.cancel(reason);
+      }
+    }
+    _activeCancelTokens.clear();
+  }
+
   void setAuthStateValidator(Future<bool> Function() validator) {
     _authStateValidator = validator;
   }

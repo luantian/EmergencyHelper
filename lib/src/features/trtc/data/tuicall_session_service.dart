@@ -4,7 +4,6 @@ import 'package:emergency_helper/src/core/di/app_dependencies.dart';
 import 'package:emergency_helper/src/core/errors/app_exception.dart';
 import 'package:emergency_helper/src/features/push/data/push_service.dart';
 import 'package:emergency_helper/src/features/trtc/data/trtc_service.dart';
-import 'package:flutter/services.dart';
 import 'package:tencent_calls_uikit/tencent_calls_uikit.dart';
 
 class TUICallSessionService {
@@ -12,13 +11,11 @@ class TUICallSessionService {
 
   static final TUICallSessionService instance = TUICallSessionService._();
   static const int _defaultRoomId = 100001;
-  static const MethodChannel _nativeLoginChannel = MethodChannel(
-    'com.tianyanzhiyun/tuicallkit_login',
-  );
 
   final TrtcService _trtcService = const TrtcService();
   Future<TUICallSessionState>? _ongoingEnsureTask;
-  Future<void> _nativeAuthTaskQueue = Future<void>.value();
+  Future<void>? _ongoingLogoutTask;
+  Future<void> _sessionTransitionQueue = Future<void>.value();
   String? _activeUserId;
   int? _activeSdkAppId;
   String? _activeUserSig;
@@ -30,6 +27,7 @@ class TUICallSessionService {
 
   void clearLocalSessionState() {
     _ongoingEnsureTask = null;
+    _ongoingLogoutTask = null;
     _activeUserId = null;
     _activeSdkAppId = null;
     _activeUserSig = null;
@@ -46,12 +44,14 @@ class TUICallSessionService {
     if (runningTask != null) {
       return runningTask;
     }
-    final task = _ensureLoggedInInternal(
-      dependencies: dependencies,
-      roomIdHint: roomIdHint,
-      forceRefreshSig: forceRefreshSig,
-      userIdHint: userIdHint,
-    );
+    final task = _enqueueSessionTransition<TUICallSessionState>(() {
+      return _ensureLoggedInInternal(
+        dependencies: dependencies,
+        roomIdHint: roomIdHint,
+        forceRefreshSig: forceRefreshSig,
+        userIdHint: userIdHint,
+      );
+    });
     _ongoingEnsureTask = task;
     try {
       return await task;
@@ -133,6 +133,16 @@ class TUICallSessionService {
         '';
     final roomId = roomIdHint > 0 ? roomIdHint : _defaultRoomId;
 
+    // Avoid re-entering the IM login path for the same in-memory user session.
+    // Repeated logout->login for the same account may trigger SDK internal
+    // send-port lock contention on some devices.
+    if (!forceRefreshSig && _activeUserId == currentUserId) {
+      return TUICallSessionState.success(
+        userId: currentUserId,
+        nickname: nickname,
+      );
+    }
+
     TrtcUserSigInfo userSigInfo;
     var canReuseActiveSig =
         !forceRefreshSig &&
@@ -200,14 +210,6 @@ class TUICallSessionService {
         } catch (_) {
           // Ignore logout failures when SDK state is already cleared.
         }
-        try {
-          await _invokeNativeMethod<Map<dynamic, dynamic>>(
-            method: 'nativeLogout',
-            timeout: const Duration(seconds: 4),
-          );
-        } catch (_) {
-          // Non-blocking.
-        }
         _activeUserId = null;
         _activeSdkAppId = null;
         _activeUserSig = null;
@@ -230,36 +232,9 @@ class TUICallSessionService {
         );
       }
 
-      // Keep native IM login in sync for push registration and vendor channels.
-      try {
-        final loginResult = await _invokeNativeMethod<Map<dynamic, dynamic>>(
-          method: 'nativeLogin',
-          arguments: <String, dynamic>{
-            'sdkAppId': userSigInfo.sdkAppId,
-            'userId': userSigInfo.userId,
-            'userSig': userSigInfo.userSig,
-          },
-          timeout: const Duration(seconds: 8),
-        );
-
-        final nativeCode = _asInt(loginResult?['errorCode']);
-        final nativeMsg = loginResult?['errorMessage'] as String?;
-        final nativeSuccess =
-            loginResult?['success'] == true ||
-            _looksAlreadyLoggedIn(nativeCode, nativeMsg);
-        if (!nativeSuccess) {
-          dependencies.logger.error(
-            'native IM login failed (non-blocking): '
-            'code=$nativeCode, msg=$nativeMsg',
-          );
-        }
-      } catch (error, stackTrace) {
-        dependencies.logger.error(
-          'native IM login threw (non-blocking)',
-          error: error,
-          stackTrace: stackTrace,
-        );
-      }
+      // Do not mirror-login via the extra native channel here.
+      // TUICallKit login already establishes IM session; duplicate native login
+      // increases contention risk in `libdart_native_imsdk` on some devices.
 
       _activeUserId = currentUserId;
       _activeSdkAppId = userSigInfo.sdkAppId;
@@ -322,42 +297,45 @@ class TUICallSessionService {
   }
 
   Future<void> logoutSilently({AppDependencies? dependencies}) async {
-    try {
-      await TUICallKit.instance.logout().timeout(const Duration(seconds: 4));
-    } catch (error) {
-      // Ignore logout failures when SDK state is already cleared.
+    final running = _ongoingLogoutTask;
+    if (running != null) {
+      await running;
+      return;
     }
+    final task = _enqueueSessionTransition<void>(() {
+      return _logoutSilentlyInternal(dependencies: dependencies);
+    });
+    _ongoingLogoutTask = task;
     try {
-      await _invokeNativeMethod<Map<dynamic, dynamic>>(
-        method: 'nativeLogout',
-        timeout: const Duration(seconds: 4),
-      );
-      dependencies?.logger.debug('[PUSH-DEBUG] nativeLogout success');
-    } catch (e) {
-      dependencies?.logger.error('nativeLogout failed', error: e);
+      await task;
     } finally {
-      clearLocalSessionState();
+      if (identical(_ongoingLogoutTask, task)) {
+        _ongoingLogoutTask = null;
+      }
     }
   }
 
-  Future<T?> _invokeNativeMethod<T>({
-    required String method,
-    Map<String, dynamic>? arguments,
-    Duration timeout = const Duration(seconds: 6),
-  }) {
-    final completer = Completer<T?>();
-    _nativeAuthTaskQueue = _nativeAuthTaskQueue.catchError((_) {}).then((
-      _,
-    ) async {
-      try {
-        final result = await _nativeLoginChannel
-            .invokeMethod<T>(method, arguments)
-            .timeout(timeout);
-        completer.complete(result);
-      } catch (error, stackTrace) {
-        completer.completeError(error, stackTrace);
-      }
-    });
+  Future<void> _logoutSilentlyInternal({AppDependencies? dependencies}) async {
+    try {
+      await TUICallKit.instance.logout().timeout(const Duration(seconds: 4));
+    } catch (_) {
+      // Ignore logout failures when SDK state is already cleared.
+    }
+    clearLocalSessionState();
+  }
+
+  Future<T> _enqueueSessionTransition<T>(Future<T> Function() action) {
+    final completer = Completer<T>();
+    _sessionTransitionQueue = _sessionTransitionQueue
+        .catchError((_) {})
+        .then((_) async {
+          try {
+            final value = await action();
+            completer.complete(value);
+          } catch (error, stackTrace) {
+            completer.completeError(error, stackTrace);
+          }
+        });
     return completer.future;
   }
 
@@ -545,19 +523,6 @@ class TUICallSessionService {
         normalized.contains('has login') ||
         normalized.contains('repeated login');
     return byCode || byText;
-  }
-
-  int? _asInt(Object? value) {
-    if (value is int) {
-      return value;
-    }
-    if (value is num) {
-      return value.toInt();
-    }
-    if (value is String) {
-      return int.tryParse(value.trim());
-    }
-    return null;
   }
 
   Map<String, dynamic>? _asMap(Object? value) {

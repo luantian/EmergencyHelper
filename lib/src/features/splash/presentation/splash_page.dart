@@ -3,10 +3,7 @@ import 'dart:async';
 import 'package:emergency_helper/src/core/di/app_dependencies.dart';
 import 'package:emergency_helper/src/core/routing/route_paths.dart';
 import 'package:emergency_helper/src/features/event/data/event_center.dart';
-import 'package:emergency_helper/src/features/push/data/push_service.dart';
 import 'package:emergency_helper/src/features/risk/data/risk_center.dart';
-import 'package:emergency_helper/src/features/trtc/data/trtc_service.dart';
-import 'package:emergency_helper/src/features/trtc/data/tuicall_session_service.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -35,36 +32,38 @@ class _SplashPageState extends State<SplashPage> {
     if (accessToken == null || accessToken.trim().isEmpty) {
       EventCenter.instance.resetSessionCache(notify: false);
       RiskCenter.instance.resetSessionData(notify: false);
-      await dependencies.pushService.unbindAlias();
-      await dependencies.pushService.clearBadgeAndNotifications();
-      await TUICallSessionService.instance.logoutSilently(
-        dependencies: dependencies,
-      );
       if (!mounted) {
         return;
       }
       context.go(RoutePaths.login);
+      unawaited(_cleanupLoggedOutStateInBackground(dependencies));
       return;
     }
 
-    final hasValidToken = await dependencies.authService.ensureValidAccessToken(
-      validateWithServer: true,
-    );
+    final hasValidToken = await dependencies.authService
+        .ensureValidAccessToken(validateWithServer: true)
+        .timeout(
+          const Duration(seconds: 6),
+          onTimeout: () {
+            dependencies.logger.error(
+              '[AUTH] splash token validate timeout, skip blocking startup',
+            );
+            // Keep startup responsive; subsequent protected APIs still perform
+            // auth checks and will redirect to login when token is invalid.
+            return true;
+          },
+        );
     if (!mounted) {
       return;
     }
     if (!hasValidToken) {
       EventCenter.instance.resetSessionCache(notify: false);
       RiskCenter.instance.resetSessionData(notify: false);
-      await dependencies.pushService.unbindAlias();
-      await dependencies.pushService.clearBadgeAndNotifications();
-      await TUICallSessionService.instance.logoutSilently(
-        dependencies: dependencies,
-      );
       if (!mounted) {
         return;
       }
       context.go(RoutePaths.login);
+      unawaited(_cleanupLoggedOutStateInBackground(dependencies));
       return;
     }
 
@@ -82,7 +81,6 @@ class _SplashPageState extends State<SplashPage> {
         permissionInfo: permissionInfo,
       ),
     );
-    unawaited(_ensureCallSessionInBackground(dependencies));
   }
 
   Future<void> _bindPushAliasInBackground({
@@ -103,84 +101,13 @@ class _SplashPageState extends State<SplashPage> {
     }
   }
 
-  Future<void> _ensureCallSessionInBackground(
+  Future<void> _cleanupLoggedOutStateInBackground(
     AppDependencies dependencies,
   ) async {
     try {
-      dependencies.logger.debug(
-        '[PUSH-DEBUG] splash: _ensureCallSessionInBackground started',
-      );
-      final result = await TUICallSessionService.instance.ensureLoggedIn(
-        dependencies: dependencies,
-      );
-      dependencies.logger.debug(
-        '[PUSH-DEBUG] splash: ensureLoggedIn result=${result.success}, '
-        'message=${result.message}',
-      );
-      var sdkAppId = TUICallSessionService.instance.activeSdkAppId;
-      if (!result.success && sdkAppId == null) {
-        // ensureLoggedIn may have failed because IM SDK was already logged in
-        // (native "has login" reported as failure in Dart layer).
-        // Try to fetch UserSig and retry login to get sdkAppId.
-        dependencies.logger.debug(
-          '[PUSH-DEBUG] splash: ensureLoggedIn failed, trying to recover',
-        );
-        try {
-          final authService = dependencies.authService;
-          var sessionInfo = await authService.getCachedPermissionInfo();
-          sessionInfo ??= await authService.fetchPermissionInfoAndCache();
-          final userId = PushService.extractAliasFromPermissionInfo(
-            sessionInfo,
-          );
-          if (userId != null && userId.isNotEmpty) {
-            final userSigInfo = await TrtcService().getUserSig(
-              dependencies.apiClient,
-              userId: userId,
-              roomId: 100001,
-              logger: dependencies.logger,
-            );
-            if (userSigInfo.sdkAppId > 0) {
-              sdkAppId = userSigInfo.sdkAppId;
-              dependencies.logger.debug(
-                '[PUSH-DEBUG] splash: recovered sdkAppId=$sdkAppId '
-                'from UserSig',
-              );
-              // Try login again; if "has login" it will be treated as success.
-              await TUICallSessionService.instance.ensureLoggedIn(
-                dependencies: dependencies,
-                forceRefreshSig: true,
-                userIdHint: userId,
-              );
-              sdkAppId =
-                  TUICallSessionService.instance.activeSdkAppId ?? sdkAppId;
-            }
-          }
-        } catch (e) {
-          dependencies.logger.error(
-            '[PUSH-DEBUG] splash: recovery failed',
-            error: e,
-          );
-        }
-      }
-      if (sdkAppId != null && sdkAppId > 0) {
-        dependencies.logger.debug(
-          '[PUSH-DEBUG] splash: calling notifyIMLoggedIn',
-        );
-        await dependencies.pushService.notifyIMLoggedIn(sdkAppId);
-        dependencies.logger.debug(
-          '[PUSH-DEBUG] splash: notifyIMLoggedIn completed',
-        );
-      } else {
-        dependencies.logger.debug(
-          '[PUSH-DEBUG] splash: no sdkAppId available, push not registered',
-        );
-      }
-    } catch (e) {
-      dependencies.logger.error(
-        '[PUSH-DEBUG] splash: _ensureCallSessionInBackground failed',
-        error: e,
-      );
-    }
+      await dependencies.pushService.unbindAlias();
+      await dependencies.pushService.clearBadgeAndNotifications();
+    } catch (_) {}
   }
 
   @override

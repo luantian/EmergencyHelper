@@ -49,8 +49,7 @@ class AppFeaturePermission {
           <String>['command', 'send'],
           <String>['dispatch', 'issue'],
         ]) ||
-        _hasDomainAdminPermission('command') ||
-        isEmergencyBureau;
+        _hasDomainAdminPermission('command');
   }
 
   bool get canEventReport {
@@ -80,8 +79,7 @@ class AppFeaturePermission {
           <String>['event', 'dispatch'],
           <String>['event', 'assign'],
         ]) ||
-        _hasDomainAdminPermission('event') ||
-        !isCommunity;
+        _hasDomainAdminPermission('event');
   }
 
   bool get canEventFeedback {
@@ -98,8 +96,7 @@ class AppFeaturePermission {
           <String>['event', 'finish'],
           <String>['event', 'complete'],
         ]) ||
-        _hasDomainAdminPermission('event') ||
-        isEmergencyBureau;
+        _hasDomainAdminPermission('event');
   }
 
   bool get canRiskReport {
@@ -129,8 +126,7 @@ class AppFeaturePermission {
           <String>['risk', 'dispatch'],
           <String>['risk', 'assign'],
         ]) ||
-        _hasDomainAdminPermission('risk') ||
-        !isCommunity;
+        _hasDomainAdminPermission('risk');
   }
 
   bool get canRiskFeedback {
@@ -147,8 +143,7 @@ class AppFeaturePermission {
           <String>['risk', 'finish'],
           <String>['risk', 'complete'],
         ]) ||
-        _hasDomainAdminPermission('risk') ||
-        isEmergencyBureau;
+        _hasDomainAdminPermission('risk');
   }
 
   bool get canContactsQuery {
@@ -195,8 +190,7 @@ class AppFeaturePermission {
           <String>['trtc', 'call'],
           <String>['video', 'call'],
         ]) ||
-        _hasDomainAdminPermission('rtc') ||
-        isEmergencyBureau;
+        _hasDomainAdminPermission('rtc');
   }
 
   bool get canDataVisualization {
@@ -207,8 +201,7 @@ class AppFeaturePermission {
           <String>['report', 'export'],
         ]) ||
         _hasDomainAdminPermission('dashboard') ||
-        _hasDomainAdminPermission('report') ||
-        isEmergencyBureau;
+        _hasDomainAdminPermission('report');
   }
 
   bool get canReportExport {
@@ -217,8 +210,7 @@ class AppFeaturePermission {
           <String>['event', 'export'],
           <String>['statistics', 'export'],
         ]) ||
-        _hasDomainAdminPermission('report') ||
-        isEmergencyBureau;
+        _hasDomainAdminPermission('report');
   }
 
   bool _hasDomainAdminPermission(String domainToken) {
