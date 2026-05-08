@@ -25,6 +25,8 @@ class RoutePaths {
   static const String businessDebug = '/business-debug';
   static const String trtcCall = '/trtc-call';
   static const String trtcCallNew = '/trtc-call-new';
+  static const String trtcIncomingCall = '/trtc-incoming-call';
+  static const String trtcInCall = '/trtc-in-call';
 
   static String eventDetailById(String eventId) =>
       '/event-detail/${Uri.encodeComponent(eventId)}';

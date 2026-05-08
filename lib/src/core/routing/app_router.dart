@@ -1,4 +1,5 @@
 import 'package:emergency_helper/src/core/routing/route_paths.dart';
+import 'package:atomic_x_core/atomicxcore.dart' show CallMediaType;
 import 'package:emergency_helper/src/features/about/presentation/about_page.dart';
 import 'package:emergency_helper/src/features/account/presentation/change_password_page.dart';
 import 'package:emergency_helper/src/features/auth/presentation/login_page.dart';
@@ -21,12 +22,13 @@ import 'package:emergency_helper/src/features/risk/presentation/risk_report_page
 import 'package:emergency_helper/src/features/risk/presentation/risk_transfer_picker_page.dart';
 import 'package:emergency_helper/src/features/splash/presentation/splash_page.dart';
 import 'package:emergency_helper/src/features/statistics/presentation/statistics_page.dart';
+import 'package:emergency_helper/src/features/trtc/presentation/in_call_page.dart';
+import 'package:emergency_helper/src/features/trtc/presentation/incoming_call_page.dart';
 import 'package:emergency_helper/src/features/trtc/presentation/trtc_call_new_page.dart';
 import 'package:emergency_helper/src/features/trtc/presentation/trtc_call_route_extra.dart';
 import 'package:emergency_helper/src/features/weather/presentation/weather_info_page.dart';
 import 'package:flutter/widgets.dart';
 import 'package:go_router/go_router.dart';
-import 'package:tencent_calls_uikit/tencent_calls_uikit.dart';
 
 class AppRouter {
   const AppRouter._();
@@ -36,7 +38,7 @@ class AppRouter {
   static GoRouter buildRouter() {
     return GoRouter(
       navigatorKey: navigatorKey,
-      observers: <NavigatorObserver>[TUICallKit.navigatorObserver],
+      observers: <NavigatorObserver>[],
       routes: <GoRoute>[
         GoRoute(
           path: RoutePaths.splash,
@@ -190,6 +192,32 @@ class AppRouter {
           builder: (context, state) {
             // Legacy route is temporarily mapped to new TUICallKit page.
             return TrtcCallNewPage(routeExtra: _resolveTrtcRouteExtra(state));
+          },
+        ),
+        GoRoute(
+          path: RoutePaths.trtcIncomingCall,
+          builder: (context, state) {
+            final params = state.uri.queryParameters;
+            return IncomingCallPage(
+              callId: params['callId'] ?? '',
+              callerId: params['callerId'] ?? '',
+              callerName: params['callerName'] ?? '未知来电',
+              mediaType: params['mediaType'] == 'video'
+                  ? CallMediaType.video
+                  : CallMediaType.audio,
+            );
+          },
+        ),
+        GoRoute(
+          path: RoutePaths.trtcInCall,
+          builder: (context, state) {
+            final params = state.uri.queryParameters;
+            return InCallPage(
+              callId: params['callId'] ?? '',
+              mediaType: params['mediaType'] == 'video'
+                  ? CallMediaType.video
+                  : CallMediaType.audio,
+            );
           },
         ),
       ],

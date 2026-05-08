@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:emergency_helper/src/core/di/app_dependencies.dart';
 import 'package:emergency_helper/src/core/errors/app_exception.dart';
 import 'package:emergency_helper/src/features/push/data/push_service.dart';
+import 'package:emergency_helper/src/features/trtc/data/custom_call_navigator.dart';
 import 'package:emergency_helper/src/features/trtc/data/trtc_service.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -91,6 +92,7 @@ class TUICallSessionService {
   /// Stop everything and notify — await native cleanup before showing toast.
   Future<void> _stopAndNotify(String message) async {
     await _stopIncomingCall();
+    CustomCallNavigator.instance.dismissAllCallScreens();
     _notifyCall(message);
   }
 
@@ -121,6 +123,13 @@ class TUICallSessionService {
           'callerId=$callerId mediaType=$mediaType',
         );
         markIncomingCall(callId);
+        // Navigate to custom incoming call UI.
+        CustomCallNavigator.instance.navigateToIncomingCall(
+          callId: callId,
+          callerId: callerId,
+          callerName: _resolveCallerName(callerId),
+          mediaType: _mediaTypeToString(mediaType),
+        );
       },
       onCallNotConnected: (callId, mediaType, reason, userId, info) {
         debugPrint(
@@ -139,6 +148,7 @@ class TUICallSessionService {
             if (wasIncoming && !_localUserAnsweredIncoming) {
               debugPrint('[TRTC-Workaround] hangup on incoming call → other device handled');
               _localUserAnsweredIncoming = false;
+              CustomCallNavigator.instance.dismissAllCallScreens();
               unawaited(_stopAndNotify('通话已在其他设备接听'));
             } else {
               _localUserAnsweredIncoming = false;
@@ -150,6 +160,7 @@ class TUICallSessionService {
             // otherDeviceAccepted(7) 被映射为 unknown(0) 或 reject(2)
             if (_isOtherDeviceHandled(callId)) {
               // 手动挂断来电以停止 SDK 的响铃 UI（FFI bug 导致 SDK 无法自动关闭）
+              CustomCallNavigator.instance.dismissAllCallScreens();
               unawaited(_stopAndNotify('通话已在其他设备接听'));
             } else {
               if (reason == rtc.CallEndReason.unknown) {
@@ -192,6 +203,11 @@ class TUICallSessionService {
           '[TRTC-GlobalObserver] 🟢 onCallBegin callId=$callId '
           'mediaType=$mediaType',
         );
+        // Transition to in-call UI.
+        CustomCallNavigator.instance.navigateToInCall(
+          callId: callId,
+          mediaType: _mediaTypeToString(mediaType),
+        );
       },
       onCallEnd: (callId, mediaType, reason, userId, totalTime, info) {
         debugPrint(
@@ -202,17 +218,20 @@ class TUICallSessionService {
           case rtc.CallEndReason.otherDeviceAccepted:
             _incomingCallIds.remove(callId);
             _localUserAnsweredIncoming = false;
+            CustomCallNavigator.instance.dismissAllCallScreens();
             _notifyCall('通话已在其他设备接听');
             break;
           case rtc.CallEndReason.lineBusy:
           case rtc.CallEndReason.otherDeviceReject:
             _incomingCallIds.remove(callId);
             _localUserAnsweredIncoming = false;
+            CustomCallNavigator.instance.dismissAllCallScreens();
             _notifyCall('对方正忙');
             break;
           default:
             _incomingCallIds.remove(callId);
             _localUserAnsweredIncoming = false;
+            CustomCallNavigator.instance.dismissAllCallScreens();
             break;
         }
       },
@@ -232,6 +251,16 @@ class TUICallSessionService {
 
   /// The sdkAppId of the currently active IM session, or null if not logged in.
   int? get activeSdkAppId => _activeSdkAppId;
+
+  String _mediaTypeToString(dynamic mediaType) {
+    final str = mediaType.toString().toLowerCase();
+    return str.contains('video') ? 'video' : 'audio';
+  }
+
+  String _resolveCallerName(String callerId) {
+    // Try to resolve from known names map, fallback to callerId.
+    return callerId;
+  }
 
   void clearLocalSessionState() {
     _sessionEpoch++;
@@ -570,25 +599,26 @@ class TUICallSessionService {
         return const TUICallSessionState.failure('音视频用户资料初始化失败，请稍后重试');
       }
 
-      try {
-        await TUICallKit.instance.enableFloatWindow(true);
-      } catch (error, stackTrace) {
-        dependencies.logger.error(
-          'enableFloatWindow threw',
-          error: error,
-          stackTrace: stackTrace,
-        );
-      }
+      // Disabled: using custom Flutter UI instead of TUICallKit native UI.
+      // try {
+      //   await TUICallKit.instance.enableFloatWindow(true);
+      // } catch (error, stackTrace) {
+      //   dependencies.logger.error(
+      //     'enableFloatWindow threw',
+      //     error: error,
+      //     stackTrace: stackTrace,
+      //   );
+      // }
 
-      try {
-        TUICallKit.instance.enableIncomingBanner(true);
-      } catch (error, stackTrace) {
-        dependencies.logger.error(
-          'enableIncomingBanner threw',
-          error: error,
-          stackTrace: stackTrace,
-        );
-      }
+      // try {
+      //   TUICallKit.instance.enableIncomingBanner(true);
+      // } catch (error, stackTrace) {
+      //   dependencies.logger.error(
+      //     'enableIncomingBanner threw',
+      //     error: error,
+      //     stackTrace: stackTrace,
+      //   );
+      // }
 
       unawaited(
         _notifyPushRegistrationInBackground(
