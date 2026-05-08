@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:emergency_helper/src/core/di/app_dependencies.dart';
 import 'package:emergency_helper/src/core/errors/app_exception.dart';
 import 'package:emergency_helper/src/core/routing/route_paths.dart';
@@ -22,8 +20,8 @@ class _EventListPageState extends State<EventListPage> {
 
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  EventProcessStatus _status = EventProcessStatus.processing;
-  Timer? _searchDebounceTimer;
+  EventProcessStatus _status = EventProcessStatus.pending;
+  bool _showClearButton = false;
   int _currentPage = 1;
   bool _hasMore = true;
   bool _loading = false;
@@ -34,19 +32,27 @@ class _EventListPageState extends State<EventListPage> {
   @override
   void initState() {
     super.initState();
-    _searchController.addListener(_onSearchChanged);
     _scrollController.addListener(_onScroll);
+    _searchController.addListener(_onTextChanged);
     Future<void>.microtask(_refreshEvents);
   }
 
   @override
   void dispose() {
-    _searchController.removeListener(_onSearchChanged);
+    _searchController.removeListener(_onTextChanged);
     _searchController.dispose();
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
-    _searchDebounceTimer?.cancel();
     super.dispose();
+  }
+
+  void _onTextChanged() {
+    final show = _searchController.text.isNotEmpty;
+    if (show != _showClearButton) {
+      setState(() {
+        _showClearButton = show;
+      });
+    }
   }
 
   @override
@@ -158,25 +164,49 @@ class _EventListPageState extends State<EventListPage> {
                         controller: _searchController,
                         textAlignVertical: TextAlignVertical.center,
                         style: const TextStyle(fontSize: 14, height: 1.2),
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           hintText: '\u641C\u7D22',
-                          hintStyle: TextStyle(
+                          hintStyle: const TextStyle(
                             color: Color(0xFF7C8794),
                             fontSize: 14,
                             height: 1.2,
                           ),
                           isDense: true,
                           border: InputBorder.none,
-                          prefixIcon: Icon(
+                          enabledBorder: InputBorder.none,
+                          focusedBorder: InputBorder.none,
+                          disabledBorder: InputBorder.none,
+                          errorBorder: InputBorder.none,
+                          focusedErrorBorder: InputBorder.none,
+                          filled: false,
+                          fillColor: Colors.transparent,
+                          prefixIcon: const Icon(
                             Icons.search_rounded,
                             size: 18,
                             color: Color(0xFF6B7682),
                           ),
-                          prefixIconConstraints: BoxConstraints(
+                          prefixIconConstraints: const BoxConstraints(
                             minWidth: 36,
                             minHeight: 38,
                           ),
-                          contentPadding: EdgeInsets.symmetric(vertical: 8),
+                          contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                          suffixIcon: _showClearButton
+                              ? GestureDetector(
+                                  onTap: () {
+                                    _searchController.clear();
+                                  },
+                                  child: const Padding(
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                    ),
+                                    child: Icon(
+                                      Icons.close,
+                                      size: 18,
+                                      color: Color(0xFF7C8794),
+                                    ),
+                                  ),
+                                )
+                              : null,
                         ),
                       ),
                     ),
@@ -184,10 +214,11 @@ class _EventListPageState extends State<EventListPage> {
                   const SizedBox(width: 10),
                   GestureDetector(
                     onTap: () {
-                      _searchController.clear();
+                      FocusScope.of(context).unfocus();
+                      _refreshEvents();
                     },
                     child: const Text(
-                      '\u53D6\u6D88',
+                      '\u641C\u7D22',
                       style: TextStyle(
                         color: Color(0xFF4D5968),
                         fontSize: 15,
@@ -261,15 +292,6 @@ class _EventListPageState extends State<EventListPage> {
         ),
       ),
     );
-  }
-
-  void _onSearchChanged() {
-    _searchDebounceTimer?.cancel();
-    _searchDebounceTimer = Timer(
-      const Duration(milliseconds: 400),
-      _refreshEvents,
-    );
-    setState(() {});
   }
 
   void _onScroll() {
@@ -458,9 +480,7 @@ class _StatusTabs extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               children: <Widget>[
                 Icon(
-                  value == EventProcessStatus.processing
-                      ? Icons.hourglass_top_rounded
-                      : Icons.task_alt_rounded,
+                  _statusTabIcon(value),
                   size: 18,
                   color: selected
                       ? AppTheme.primaryBlue
@@ -495,6 +515,8 @@ class _StatusTabs extends StatelessWidget {
         ),
         child: Row(
           children: <Widget>[
+            buildItem(EventProcessStatus.pending),
+            const SizedBox(width: 4),
             buildItem(EventProcessStatus.processing),
             const SizedBox(width: 4),
             buildItem(EventProcessStatus.finished),
@@ -502,6 +524,17 @@ class _StatusTabs extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  IconData _statusTabIcon(EventProcessStatus status) {
+    switch (status) {
+      case EventProcessStatus.pending:
+        return Icons.pending_actions_rounded;
+      case EventProcessStatus.processing:
+        return Icons.hourglass_top_rounded;
+      case EventProcessStatus.finished:
+        return Icons.task_alt_rounded;
+    }
   }
 }
 
@@ -513,12 +546,8 @@ class _EventCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final statusForeground = event.status == EventProcessStatus.processing
-        ? const Color(0xFF1F9A3C)
-        : const Color(0xFF586579);
-    final statusBackground = event.status == EventProcessStatus.processing
-        ? const Color(0xFFE8F8EC)
-        : const Color(0xFFE9ECF2);
+    final statusForeground = _statusForeground(event.status);
+    final statusBackground = _statusBackground(event.status);
     final levelColor = _levelTagColor(event.level);
     final typeLabel = _normalizeEventType(event.type);
 
@@ -564,9 +593,7 @@ class _EventCard extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: <Widget>[
                         Icon(
-                          event.status == EventProcessStatus.processing
-                              ? Icons.timelapse_rounded
-                              : Icons.check_circle_rounded,
+                          _statusIcon(event.status),
                           size: 11,
                           color: statusForeground,
                         ),
@@ -752,5 +779,38 @@ class _EventCard extends StatelessWidget {
     String two(int v) => v.toString().padLeft(2, '0');
     return '${value.year}-${two(value.month)}-${two(value.day)} '
         '${two(value.hour)}:${two(value.minute)}:${two(value.second)}';
+  }
+
+  Color _statusForeground(EventProcessStatus status) {
+    switch (status) {
+      case EventProcessStatus.pending:
+        return const Color(0xFFD87817);
+      case EventProcessStatus.processing:
+        return const Color(0xFF1F9A3C);
+      case EventProcessStatus.finished:
+        return const Color(0xFF586579);
+    }
+  }
+
+  Color _statusBackground(EventProcessStatus status) {
+    switch (status) {
+      case EventProcessStatus.pending:
+        return const Color(0xFFFFF1DF);
+      case EventProcessStatus.processing:
+        return const Color(0xFFE8F8EC);
+      case EventProcessStatus.finished:
+        return const Color(0xFFE9ECF2);
+    }
+  }
+
+  IconData _statusIcon(EventProcessStatus status) {
+    switch (status) {
+      case EventProcessStatus.pending:
+        return Icons.pending_actions_rounded;
+      case EventProcessStatus.processing:
+        return Icons.timelapse_rounded;
+      case EventProcessStatus.finished:
+        return Icons.check_circle_rounded;
+    }
   }
 }

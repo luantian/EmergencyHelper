@@ -4,6 +4,7 @@ import 'package:emergency_helper/src/core/di/app_dependencies.dart';
 import 'package:emergency_helper/src/core/theme/app_theme.dart';
 import 'package:emergency_helper/src/core/widgets/app_center_toast.dart';
 import 'package:emergency_helper/src/features/push/data/push_service.dart';
+import 'package:emergency_helper/src/features/trtc/data/tuicall_session_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -21,6 +22,7 @@ class _PushDebugPageState extends State<PushDebugPage> {
   bool _loading = true;
   bool _refreshing = false;
   bool _binding = false;
+  bool _forcingRegister = false;
   Map<String, dynamic>? _permissionInfo;
   PushDebugSnapshot? _snapshot;
 
@@ -58,6 +60,10 @@ class _PushDebugPageState extends State<PushDebugPage> {
                   const SizedBox(height: 10),
                   _buildAliasResultCard(snapshot),
                   const SizedBox(height: 10),
+                  _buildRegisterResultCard(snapshot),
+                  const SizedBox(height: 10),
+                  _buildSetRegistrationResultCard(snapshot),
+                  const SizedBox(height: 10),
                   _buildRidCard(snapshot),
                 ],
               ),
@@ -68,6 +74,7 @@ class _PushDebugPageState extends State<PushDebugPage> {
   Widget _buildActionCard(PushDebugSnapshot? snapshot) {
     final refreshingOrLoading = _loading || _refreshing;
     final canRebind = !_binding && !refreshingOrLoading;
+    final canForceRegister = !_forcingRegister && !refreshingOrLoading;
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
       decoration: _cardDecoration(),
@@ -95,6 +102,20 @@ class _PushDebugPageState extends State<PushDebugPage> {
             label: Text(_binding ? '绑定中...' : '重新绑定别名'),
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF2273C9),
+              foregroundColor: Colors.white,
+            ),
+          ),
+          ElevatedButton.icon(
+            onPressed: canForceRegister ? _forceRegisterPush : null,
+            icon: Icon(
+              _forcingRegister
+                  ? Icons.hourglass_top_rounded
+                  : Icons.sync_rounded,
+              size: 18,
+            ),
+            label: Text(_forcingRegister ? '重注册中...' : '强制重注册 Push'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF1E8A6E),
               foregroundColor: Colors.white,
             ),
           ),
@@ -214,6 +235,64 @@ class _PushDebugPageState extends State<PushDebugPage> {
     );
   }
 
+  Widget _buildRegisterResultCard(PushDebugSnapshot? snapshot) {
+    final data = snapshot;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      decoration: _cardDecoration(),
+      child: Column(
+        children: <Widget>[
+          _DebugRow(
+            label: 'registerPush code',
+            value: _safeText(data?.lastRegisterPushCode),
+          ),
+          _DebugRow(
+            label: 'registerPush message',
+            value: _safeText(data?.lastRegisterPushMessage),
+          ),
+          _DebugRow(
+            label: 'registerPush sdkAppId',
+            value: data?.lastRegisterPushSdkAppId?.toString() ?? '--',
+          ),
+          _DebugRow(
+            label: 'registerPush 时间',
+            value: _formatTime(data?.lastRegisterPushTime),
+            hideDivider: true,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSetRegistrationResultCard(PushDebugSnapshot? snapshot) {
+    final data = snapshot;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      decoration: _cardDecoration(),
+      child: Column(
+        children: <Widget>[
+          _DebugRow(
+            label: 'setRegistrationID code',
+            value: _safeText(data?.lastSetRegistrationIdCode),
+          ),
+          _DebugRow(
+            label: 'setRegistrationID message',
+            value: _safeText(data?.lastSetRegistrationIdMessage),
+          ),
+          _DebugRow(
+            label: 'setRegistrationID value',
+            value: _safeText(data?.lastSetRegistrationIdValue),
+          ),
+          _DebugRow(
+            label: 'setRegistrationID 时间',
+            value: _formatTime(data?.lastSetRegistrationIdTime),
+            hideDivider: true,
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _refreshState({bool showTimeoutToast = false}) async {
     if (_refreshing) {
       return;
@@ -318,6 +397,77 @@ class _PushDebugPageState extends State<PushDebugPage> {
       if (mounted) {
         setState(() {
           _binding = false;
+        });
+      }
+    }
+
+    if (tipMessage != null && mounted) {
+      _showMessage(tipMessage);
+    }
+  }
+
+  Future<void> _forceRegisterPush() async {
+    if (_forcingRegister) {
+      return;
+    }
+    setState(() {
+      _forcingRegister = true;
+    });
+
+    final dependencies = context.read<AppDependencies>();
+    String? tipMessage;
+
+    try {
+      final permissionInfo =
+          _permissionInfo ??
+          await dependencies.authService.getCachedPermissionInfo();
+      final userId = PushService.extractAliasFromPermissionInfo(permissionInfo);
+
+      final sessionState = await TUICallSessionService.instance
+          .ensureLoggedIn(dependencies: dependencies)
+          .timeout(const Duration(seconds: 18));
+      if (!sessionState.success) {
+        _showMessage('音视频会话未就绪: ${sessionState.message}');
+        return;
+      }
+
+      final sdkAppId = TUICallSessionService.instance.activeSdkAppId;
+      if (sdkAppId == null || sdkAppId <= 0) {
+        _showMessage('未获取到 sdkAppId，无法重注册 Push');
+        return;
+      }
+
+      try {
+        await dependencies.pushService
+            .notifyIMLoggedIn(sdkAppId, userId: userId, force: true)
+            .timeout(const Duration(seconds: 15));
+      } on TimeoutException {
+        tipMessage = '重注册超时，已在后台继续执行';
+      }
+
+      final refreshTip = await _refreshRegistrationIdWithTimeout(dependencies);
+      tipMessage ??= refreshTip;
+
+      final snapshot = dependencies.pushService.getDebugSnapshot(
+        userId: userId,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _permissionInfo = permissionInfo;
+        _snapshot = snapshot;
+      });
+      _showMessage(
+        '重注册结果 code=${_safeText(snapshot.lastRegisterPushCode)}，'
+        'RID=${_safeText(snapshot.registrationId)}',
+      );
+    } catch (error) {
+      _showMessage('强制重注册失败: $error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _forcingRegister = false;
         });
       }
     }

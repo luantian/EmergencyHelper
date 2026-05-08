@@ -35,6 +35,16 @@ class _MessageTabPageState extends State<MessageTabPage>
     with AutomaticKeepAliveClientMixin<MessageTabPage> {
   static const int _pageSize = 20;
   static const Duration _activeAutoRefreshInterval = Duration(seconds: 20);
+  static const String _messageTypeAllKey = '__all__';
+  static const String _messageUnreadOnlyKey = '__unread__';
+  static const List<String> _messageTypeOrder = <String>[
+    'event_report',
+    'risk_report',
+    'event_dynamic',
+    'risk_dynamic',
+    'weather_warning',
+    'other',
+  ];
   static const List<Duration> _unreadSyncRetryDelays = <Duration>[
     Duration(milliseconds: 650),
     Duration(milliseconds: 1600),
@@ -58,6 +68,7 @@ class _MessageTabPageState extends State<MessageTabPage>
   bool _loadingMore = false;
   bool _markingAllRead = false;
   String? _loadError;
+  String _selectedTypeFilterKey = _messageTypeAllKey;
 
   bool get _hasUnread => _items.any((item) => !item.readStatus);
 
@@ -84,7 +95,8 @@ class _MessageTabPageState extends State<MessageTabPage>
         _scheduleAutoRefresh(const Duration(milliseconds: 250));
       }
     }
-    if (widget.isActive && widget.unreadCountHint != oldWidget.unreadCountHint) {
+    if (widget.isActive &&
+        widget.unreadCountHint != oldWidget.unreadCountHint) {
       _scheduleAutoRefresh(const Duration(milliseconds: 200));
     }
   }
@@ -103,6 +115,8 @@ class _MessageTabPageState extends State<MessageTabPage>
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    final filteredItems = _filteredMessageItems();
+    final typeFilters = _buildTypeFilters();
 
     return Scaffold(
       appBar: AppBar(
@@ -175,15 +189,20 @@ class _MessageTabPageState extends State<MessageTabPage>
                   ),
                 ),
               ),
+            if (_items.isNotEmpty) _buildTypeFilterBar(typeFilters),
             Expanded(
-              child: _items.isEmpty
+              child: filteredItems.isEmpty
                   ? RefreshIndicator(
                       onRefresh: _refreshMessages,
                       child: ListView(
                         physics: const AlwaysScrollableScrollPhysics(),
-                        children: const <Widget>[
-                          SizedBox(height: 160),
-                          _EmptyMessageView(),
+                        children: <Widget>[
+                          const SizedBox(height: 160),
+                          _items.isEmpty
+                              ? const _EmptyMessageView()
+                              : _FilteredEmptyMessageView(
+                                  label: _activeFilterLabel(typeFilters),
+                                ),
                         ],
                       ),
                     )
@@ -195,14 +214,14 @@ class _MessageTabPageState extends State<MessageTabPage>
                           parent: AlwaysScrollableScrollPhysics(),
                         ),
                         padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
-                        itemCount: _items.length + 1,
+                        itemCount: filteredItems.length + 1,
                         separatorBuilder: (context, index) =>
                             const SizedBox(height: 8),
                         itemBuilder: (context, index) {
-                          if (index >= _items.length) {
+                          if (index >= filteredItems.length) {
                             return _buildFooter();
                           }
-                          final item = _items[index];
+                          final item = filteredItems[index];
                           return _MessageItemTile(
                             item: item,
                             onTap: () => _onTapMessage(item),
@@ -215,6 +234,148 @@ class _MessageTabPageState extends State<MessageTabPage>
         ),
       ),
     );
+  }
+
+  Widget _buildTypeFilterBar(List<_MessageTypeFilterOption> options) {
+    final hasSelectedOption = options.any(
+      (option) => option.key == _selectedTypeFilterKey,
+    );
+    final selectedKey = hasSelectedOption
+        ? _selectedTypeFilterKey
+        : _messageTypeAllKey;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: const Color(0xFFD5E1EE)),
+        ),
+        child: Row(
+          children: <Widget>[
+            const Text(
+              '\u6D88\u606F\u7B5B\u9009',
+              style: TextStyle(
+                color: Color(0xFF516377),
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: selectedKey,
+                  isExpanded: true,
+                  icon: const Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    size: 22,
+                    color: Color(0xFF6D7F95),
+                  ),
+                  style: const TextStyle(
+                    color: Color(0xFF1F2E41),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  dropdownColor: Colors.white,
+                  items: options
+                      .map(
+                        (option) => DropdownMenuItem<String>(
+                          value: option.key,
+                          child: Text(option.label),
+                        ),
+                      )
+                      .toList(growable: false),
+                  onChanged: (value) {
+                    if (value == null || value == _selectedTypeFilterKey) {
+                      return;
+                    }
+                    setState(() {
+                      _selectedTypeFilterKey = value;
+                    });
+                  },
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<_MessageTypeFilterOption> _buildTypeFilters() {
+    final labels = <String, String>{};
+    final keysInList = <String>{};
+    for (final item in _items) {
+      labels[item.messageTypeKey] = item.messageTypeLabel;
+      keysInList.add(item.messageTypeKey);
+    }
+
+    final options = <_MessageTypeFilterOption>[
+      const _MessageTypeFilterOption(
+        key: _messageTypeAllKey,
+        label: '\u5168\u90E8\u6D88\u606F',
+      ),
+      if (_hasUnread)
+        const _MessageTypeFilterOption(
+          key: _messageUnreadOnlyKey,
+          label: '\u4EC5\u770B\u672A\u8BFB',
+        ),
+    ];
+
+    for (final key in _messageTypeOrder) {
+      if (!keysInList.contains(key)) {
+        continue;
+      }
+      options.add(
+        _MessageTypeFilterOption(key: key, label: labels[key] ?? key),
+      );
+    }
+
+    for (final key in keysInList) {
+      if (key == _messageTypeAllKey ||
+          key == _messageUnreadOnlyKey ||
+          _messageTypeOrder.contains(key)) {
+        continue;
+      }
+      options.add(
+        _MessageTypeFilterOption(key: key, label: labels[key] ?? key),
+      );
+    }
+
+    return options;
+  }
+
+  List<NotifyMessageItem> _filteredMessageItems() {
+    if (_selectedTypeFilterKey == _messageTypeAllKey) {
+      return _items;
+    }
+    if (_selectedTypeFilterKey == _messageUnreadOnlyKey) {
+      if (!_hasUnread) {
+        return _items;
+      }
+      return _items.where((item) => !item.readStatus).toList(growable: false);
+    }
+    final hasMatch = _items.any(
+      (item) => item.messageTypeKey == _selectedTypeFilterKey,
+    );
+    if (!hasMatch) {
+      return _items;
+    }
+    return _items
+        .where((item) => item.messageTypeKey == _selectedTypeFilterKey)
+        .toList(growable: false);
+  }
+
+  String _activeFilterLabel(List<_MessageTypeFilterOption> options) {
+    for (final option in options) {
+      if (option.key == _selectedTypeFilterKey) {
+        return option.label;
+      }
+    }
+    return '\u5168\u90E8\u6D88\u606F';
   }
 
   Widget _buildFooter() {
@@ -319,7 +480,7 @@ class _MessageTabPageState extends State<MessageTabPage>
         return;
       }
       setState(() {
-        _items = page.list;
+        _items = _sortedMessageItems(page.list);
         _total = page.total;
         _hasMore = _items.length < _total;
       });
@@ -367,7 +528,10 @@ class _MessageTabPageState extends State<MessageTabPage>
       if (!mounted) {
         return;
       }
-      final merged = <NotifyMessageItem>[..._items, ...page.list];
+      final merged = _sortedMessageItems(<NotifyMessageItem>[
+        ..._items,
+        ...page.list,
+      ]);
       setState(() {
         _items = merged;
         _total = page.total;
@@ -386,6 +550,13 @@ class _MessageTabPageState extends State<MessageTabPage>
   }
 
   Future<void> _onTapMessage(NotifyMessageItem item) async {
+    final hasEventId = item.eventId != null &&
+        (item.messageTypeKey == 'event_report' ||
+            item.messageTypeKey == 'event_dynamic');
+    final hasRiskId = item.riskId != null &&
+        (item.messageTypeKey == 'risk_report' ||
+            item.messageTypeKey == 'risk_dynamic');
+
     if (!mounted) {
       return;
     }
@@ -401,22 +572,45 @@ class _MessageTabPageState extends State<MessageTabPage>
       final nextHint = (widget.unreadCountHint - 1).clamp(0, 9999).toInt();
       _emitUnreadHint(nextHint);
       setState(() {
-        _items = _items
-            .map(
-              (candidate) => candidate.id == current.id
-                  ? candidate.copyWith(readStatus: true)
-                  : candidate,
-            )
-            .toList(growable: false);
+        _items = _sortedMessageItems(
+          _items
+              .map(
+                (candidate) => candidate.id == current.id
+                    ? candidate.copyWith(readStatus: true)
+                    : candidate,
+              )
+              .toList(growable: false),
+        );
       });
+      // Notify the server early for event messages so the badge updates.
+      if (hasEventId) {
+        try {
+          final dependencies = context.read<AppDependencies>();
+          await _service.markRead(dependencies.apiClient, <int>[current.id]);
+        } catch (_) {
+          // Ignore server error for now; UI will sync on next refresh.
+        }
+      }
     }
-    await context.push(
-      RoutePaths.messageDetailById(item.id),
-      extra: MessageDetailRouteExtra(
-        initialItem: current,
-        onReadChanged: _notifyUnreadChanged,
-      ),
-    );
+
+    if (hasEventId) {
+      await context.push(
+        RoutePaths.eventDetailById(item.eventId.toString()),
+      );
+    } else if (hasRiskId) {
+      await context.push(
+        RoutePaths.riskDetailById(item.riskId.toString()),
+      );
+    } else {
+      await context.push(
+        RoutePaths.messageDetailById(item.id),
+        extra: MessageDetailRouteExtra(
+          initialItem: current,
+          onReadChanged: _notifyUnreadChanged,
+        ),
+      );
+    }
+
     if (!mounted) {
       return;
     }
@@ -439,9 +633,14 @@ class _MessageTabPageState extends State<MessageTabPage>
         return;
       }
       setState(() {
-        _items = _items
-            .map((item) => item.copyWith(readStatus: true))
-            .toList(growable: false);
+        _items = _sortedMessageItems(
+          _items
+              .map((item) => item.copyWith(readStatus: true))
+              .toList(growable: false),
+        );
+        if (_selectedTypeFilterKey == _messageUnreadOnlyKey) {
+          _selectedTypeFilterKey = _messageTypeAllKey;
+        }
       });
       _emitUnreadHint(0);
       await _notifyUnreadChanged();
@@ -500,6 +699,24 @@ class _MessageTabPageState extends State<MessageTabPage>
     });
   }
 
+  List<NotifyMessageItem> _sortedMessageItems(List<NotifyMessageItem> source) {
+    final sorted = List<NotifyMessageItem>.from(source);
+    sorted.sort(_compareMessageItem);
+    return sorted;
+  }
+
+  int _compareMessageItem(NotifyMessageItem a, NotifyMessageItem b) {
+    if (a.readStatus != b.readStatus) {
+      return a.readStatus ? 1 : -1;
+    }
+    final aTime = a.createTime?.millisecondsSinceEpoch ?? -1;
+    final bTime = b.createTime?.millisecondsSinceEpoch ?? -1;
+    if (aTime != bTime) {
+      return bTime.compareTo(aTime);
+    }
+    return b.id.compareTo(a.id);
+  }
+
   void _emitUnreadHint(int value) {
     final callback = widget.onUnreadHintChanged;
     if (callback == null) {
@@ -525,6 +742,7 @@ class _MessageItemTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isUnread = !item.readStatus;
+    final typeStyle = _typeStyle(item.messageTypeKey);
     return Material(
       color: Colors.white,
       borderRadius: BorderRadius.circular(12),
@@ -545,11 +763,12 @@ class _MessageItemTile extends StatelessWidget {
             ],
           ),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: <Widget>[
               Container(
                 width: 42,
                 height: 42,
+                alignment: Alignment.center,
                 decoration: BoxDecoration(
                   color: isUnread
                       ? const Color(0xFFDDEFFF)
@@ -573,6 +792,27 @@ class _MessageItemTile extends StatelessWidget {
                   children: <Widget>[
                     Row(
                       children: <Widget>[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: typeStyle.background,
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: typeStyle.border),
+                          ),
+                          child: Text(
+                            item.messageTypeLabel,
+                            style: TextStyle(
+                              color: typeStyle.foreground,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w700,
+                              height: 1.1,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
                         Expanded(
                           child: Text(
                             item.title,
@@ -621,7 +861,17 @@ class _MessageItemTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 6),
-              const Icon(Icons.chevron_right, color: Color(0xFF93A2B7)),
+              const SizedBox(
+                width: 24,
+                height: 42,
+                child: Center(
+                  child: Icon(
+                    Icons.chevron_right,
+                    color: Color(0xFF93A2B7),
+                    size: 22,
+                  ),
+                ),
+              ),
             ],
           ),
         ),
@@ -636,6 +886,47 @@ class _MessageItemTile extends StatelessWidget {
     String two(int value) => value.toString().padLeft(2, '0');
     return '${time.year}-${two(time.month)}-${two(time.day)} '
         '${two(time.hour)}:${two(time.minute)}:${two(time.second)}';
+  }
+
+  _MessageTypeVisualStyle _typeStyle(String key) {
+    switch (key) {
+      case 'event_report':
+        return const _MessageTypeVisualStyle(
+          foreground: Color(0xFF2C6CB0),
+          background: Color(0xFFE9F3FF),
+          border: Color(0xFFC9DFF8),
+        );
+      case 'risk_report':
+        return const _MessageTypeVisualStyle(
+          foreground: Color(0xFF8E4E00),
+          background: Color(0xFFFFF2E2),
+          border: Color(0xFFF4D6AC),
+        );
+      case 'event_dynamic':
+        return const _MessageTypeVisualStyle(
+          foreground: Color(0xFF1F8C53),
+          background: Color(0xFFE8F8EF),
+          border: Color(0xFFC3EBCF),
+        );
+      case 'risk_dynamic':
+        return const _MessageTypeVisualStyle(
+          foreground: Color(0xFF6A4CC2),
+          background: Color(0xFFF0EBFF),
+          border: Color(0xFFD7CCFA),
+        );
+      case 'weather_warning':
+        return const _MessageTypeVisualStyle(
+          foreground: Color(0xFFB0432B),
+          background: Color(0xFFFFECEC),
+          border: Color(0xFFF2C5C5),
+        );
+      default:
+        return const _MessageTypeVisualStyle(
+          foreground: Color(0xFF5B6372),
+          background: Color(0xFFF2F4F8),
+          border: Color(0xFFDEE3EB),
+        );
+    }
   }
 }
 
@@ -665,4 +956,53 @@ class _EmptyMessageView extends StatelessWidget {
       ),
     );
   }
+}
+
+class _FilteredEmptyMessageView extends StatelessWidget {
+  const _FilteredEmptyMessageView({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        children: <Widget>[
+          const Icon(
+            Icons.filter_alt_off_rounded,
+            size: 42,
+            color: Color(0xFF9AABBF),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            '$label 暂无消息',
+            style: const TextStyle(
+              color: Color(0xFF6F8095),
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MessageTypeFilterOption {
+  const _MessageTypeFilterOption({required this.key, required this.label});
+
+  final String key;
+  final String label;
+}
+
+class _MessageTypeVisualStyle {
+  const _MessageTypeVisualStyle({
+    required this.foreground,
+    required this.background,
+    required this.border,
+  });
+
+  final Color foreground;
+  final Color background;
+  final Color border;
 }

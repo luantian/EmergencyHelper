@@ -20,6 +20,7 @@ import 'package:emergency_helper/src/features/risk/presentation/risk_list_page.d
 import 'package:emergency_helper/src/features/risk/presentation/risk_report_page.dart';
 import 'package:emergency_helper/src/features/risk/presentation/risk_transfer_picker_page.dart';
 import 'package:emergency_helper/src/features/splash/presentation/splash_page.dart';
+import 'package:emergency_helper/src/features/statistics/presentation/statistics_page.dart';
 import 'package:emergency_helper/src/features/trtc/presentation/trtc_call_new_page.dart';
 import 'package:emergency_helper/src/features/trtc/presentation/trtc_call_route_extra.dart';
 import 'package:emergency_helper/src/features/weather/presentation/weather_info_page.dart';
@@ -30,11 +31,12 @@ import 'package:tencent_calls_uikit/tencent_calls_uikit.dart';
 class AppRouter {
   const AppRouter._();
 
+  static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
   static GoRouter buildRouter() {
     return GoRouter(
-      observers: <NavigatorObserver>[
-        TUICallKit.navigatorObserver,
-      ],
+      navigatorKey: navigatorKey,
+      observers: <NavigatorObserver>[TUICallKit.navigatorObserver],
       routes: <GoRoute>[
         GoRoute(
           path: RoutePaths.splash,
@@ -122,6 +124,23 @@ class AppRouter {
         GoRoute(
           path: RoutePaths.weatherInfo,
           builder: (context, state) => const WeatherInfoPage(),
+        ),
+        GoRoute(
+          path: RoutePaths.statistics,
+          builder: (context, state) {
+            final rawTab = (state.uri.queryParameters['tab'] ?? '')
+                .trim()
+                .toLowerCase();
+            final initialTab =
+                rawTab == 'risk' ||
+                    rawTab == 'derived-risk' ||
+                    rawTab == 'derived_risk' ||
+                    rawTab == 'secondary-risk' ||
+                    rawTab == 'secondary_risk'
+                ? StatisticsTabKind.derivedRisk
+                : StatisticsTabKind.event;
+            return StatisticsPage(initialTab: initialTab);
+          },
         ),
         GoRoute(
           path: RoutePaths.changePassword,

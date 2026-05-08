@@ -1,4 +1,4 @@
-﻿import 'dart:convert';
+import 'dart:convert';
 
 import 'package:emergency_helper/src/core/constants/app_constants.dart';
 import 'package:emergency_helper/src/core/errors/app_exception.dart';
@@ -15,35 +15,67 @@ class TrtcService {
     AppLogger? logger,
   }) async {
     final requestQuery = <String, dynamic>{'userId': userId, 'roomId': roomId};
-    _logTrtcApi(
-      logger,
-      stage: 'request',
-      method: 'GET',
-      path: AppConstants.trtcUserSigPath,
-      queryParameters: requestQuery,
-    );
-    final response = await apiClient.getJson(
-      AppConstants.trtcUserSigPath,
-      queryParameters: requestQuery,
-    );
-    _logTrtcApi(
-      logger,
-      stage: 'response',
-      method: 'GET',
-      path: AppConstants.trtcUserSigPath,
-      queryParameters: requestQuery,
-      response: response,
-    );
-    final data = _expectSuccessAndData(
-      response,
-      fallbackMessage: '获取 TRTC 用户签名失败',
-      endpoint: AppConstants.trtcUserSigPath,
-    );
-    final map = _asMap(data);
-    if (map == null || map.isEmpty) {
-      throw AppException('TRTC 用户签名数据为空');
+    Object? lastError;
+
+    Future<TrtcUserSigInfo> fetchByMethod(String method) async {
+      final normalizedMethod = method.toUpperCase();
+      _logTrtcApi(
+        logger,
+        stage: 'request',
+        method: normalizedMethod,
+        path: AppConstants.trtcUserSigPath,
+        queryParameters: requestQuery,
+      );
+      final response = normalizedMethod == 'POST'
+          ? await apiClient.postJson(
+              AppConstants.trtcUserSigPath,
+              queryParameters: requestQuery,
+            )
+          : await apiClient.getJson(
+              AppConstants.trtcUserSigPath,
+              queryParameters: requestQuery,
+            );
+      _logTrtcApi(
+        logger,
+        stage: 'response',
+        method: normalizedMethod,
+        path: AppConstants.trtcUserSigPath,
+        queryParameters: requestQuery,
+        response: response,
+      );
+      final data = _expectSuccessAndData(
+        response,
+        fallbackMessage: '获取 TRTC 用户签名失败',
+        endpoint: AppConstants.trtcUserSigPath,
+      );
+      final parsed = _parseUserSigInfoFromResponseData(data);
+      if (parsed == null) {
+        throw AppException('TRTC 用户签名数据为空');
+      }
+      return TrtcUserSigInfo(
+        sdkAppId: parsed.sdkAppId,
+        userId: _isUsableUserId(parsed.userId) ? parsed.userId : userId,
+        userSig: parsed.userSig,
+        roomId: parsed.roomId > 0 ? parsed.roomId : roomId,
+      );
     }
-    return TrtcUserSigInfo.fromMap(map);
+
+    try {
+      return await fetchByMethod('GET');
+    } catch (error) {
+      lastError = error;
+    }
+
+    try {
+      return await fetchByMethod('POST');
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (lastError is AppException) {
+      throw lastError;
+    }
+    throw AppException('获取 TRTC 用户签名失败');
   }
 
   Future<bool> verifyUserSig(
@@ -272,6 +304,37 @@ class TrtcService {
     return text;
   }
 
+  TrtcUserSigInfo? _parseUserSigInfoFromResponseData(Object? data) {
+    final direct = _asMap(data);
+    if (direct == null || direct.isEmpty) {
+      return null;
+    }
+
+    final candidates = <Map<String, dynamic>>[direct];
+    for (final key in <String>[
+      'userSigInfo',
+      'user_sig_info',
+      'result',
+      'data',
+      'payload',
+    ]) {
+      final nested = _asMap(direct[key]);
+      if (nested != null && nested.isNotEmpty) {
+        candidates.add(nested);
+      }
+    }
+
+    for (final candidate in candidates) {
+      final parsed = TrtcUserSigInfo.fromMap(candidate);
+      if (parsed.sdkAppId > 0 &&
+          parsed.userSig.trim().isNotEmpty &&
+          parsed.userId.trim().isNotEmpty) {
+        return parsed;
+      }
+    }
+    return null;
+  }
+
   void _logTrtcApi(
     AppLogger? logger, {
     required String stage,
@@ -305,11 +368,33 @@ class TrtcUserSigInfo {
   });
 
   factory TrtcUserSigInfo.fromMap(Map<String, dynamic> map) {
+    Object? pick(List<String> keys) {
+      for (final key in keys) {
+        final value = map[key];
+        if (value != null) {
+          return value;
+        }
+      }
+      return null;
+    }
+
     return TrtcUserSigInfo(
-      sdkAppId: _toInt(map['sdkAppId']) ?? 0,
-      userId: _toText(map['userId']) ?? '',
-      userSig: _toText(map['userSig']) ?? '',
-      roomId: _toInt(map['roomId']) ?? 0,
+      sdkAppId:
+          _toInt(
+            pick(<String>['sdkAppId', 'sdkAppID', 'SDKAppID', 'sdkappid']),
+          ) ??
+          0,
+      userId:
+          _toText(
+            pick(<String>['userId', 'userID', 'uid', 'user_id', 'userid']),
+          ) ??
+          '',
+      userSig:
+          _toText(
+            pick(<String>['userSig', 'userSIG', 'user_sig', 'usersig']),
+          ) ??
+          '',
+      roomId: _toInt(pick(<String>['roomId', 'roomID', 'room_id'])) ?? 0,
     );
   }
 
@@ -383,6 +468,17 @@ class TrtcCallRecord {
   final int duration;
   final int endReason;
   final DateTime? createTime;
+}
+
+bool _isUsableUserId(String? value) {
+  if (value == null || value.isEmpty) {
+    return false;
+  }
+  final trimmed = value.trim();
+  if (trimmed.isEmpty || trimmed.toLowerCase() == 'null') {
+    return false;
+  }
+  return true;
 }
 
 int? _toInt(Object? value) {

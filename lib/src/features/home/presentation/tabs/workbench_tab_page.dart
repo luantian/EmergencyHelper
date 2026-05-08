@@ -2,10 +2,12 @@ import 'dart:async';
 
 import 'package:emergency_helper/src/core/auth/app_feature_permission.dart';
 import 'package:emergency_helper/src/core/di/app_dependencies.dart';
+import 'package:emergency_helper/src/core/errors/app_exception.dart';
 import 'package:emergency_helper/src/core/routing/route_paths.dart';
 import 'package:emergency_helper/src/core/theme/app_theme.dart';
 import 'package:emergency_helper/src/core/widgets/app_center_toast.dart';
 import 'package:emergency_helper/src/features/home/data/workbench_statistics_service.dart';
+import 'package:emergency_helper/src/features/weather/data/event_weather_warning_service.dart';
 import 'package:emergency_helper/src/features/weather/data/free_weather_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -418,14 +420,15 @@ class _WarningCard extends StatefulWidget {
 }
 
 class _WarningCardState extends State<_WarningCard> {
-  late final FreeWeatherService _service;
+  late final EventWeatherWarningService _service;
   late Future<_WeatherWarningData> _future;
   Timer? _refreshTimer;
+  _WeatherWarningData? _cachedData;
 
   @override
   void initState() {
     super.initState();
-    _service = FreeWeatherService();
+    _service = EventWeatherWarningService();
     _future = _loadWarningData();
     _refreshTimer = Timer.periodic(
       const Duration(minutes: 10),
@@ -449,24 +452,79 @@ class _WarningCardState extends State<_WarningCard> {
   }
 
   Future<_WeatherWarningData> _loadWarningData() async {
-    String weatherIconAsset = 'assets/images/weather/weather_cloudy.png';
     try {
-      final snapshot = await _service.fetchShenyangForecast();
-      weatherIconAsset = _weatherIconAssetByCode(snapshot.currentWeatherCode);
-    } catch (_) {}
-
-    final official = await _service.fetchOfficialWarningNow();
-    final warning = _pickActiveOfficialWarning(official.warnings);
-    if (warning == null) {
-      return _noOfficialWarningData(
-        official.updateTime,
-        weatherIconAsset: weatherIconAsset,
+      final dependencies = context.read<AppDependencies>();
+      final list = await _service.fetchWarningList(dependencies.apiClient);
+      final first = list.isNotEmpty ? list.first : null;
+      if (first == null) {
+        return _WeatherWarningData(
+          iconLabel: '预警',
+          iconAsset: 'assets/images/weather/weather_cloudy.png',
+          title: '暂无气象预警信息',
+          timeText: '--',
+          cardColor: const Color(0xFFE1F1E2),
+          iconColor: const Color(0xFF62B46B),
+        );
+      }
+      return _weatherWarningFromBackend(first);
+    } catch (_) {
+      // Return cached data on error to avoid showing loading/error UI
+      if (_cachedData != null) {
+        return _cachedData!;
+      }
+      return _WeatherWarningData(
+        iconLabel: '预警',
+        iconAsset: 'assets/images/weather/weather_cloudy.png',
+        title: '暂无气象预警信息',
+        timeText: '--',
+        cardColor: const Color(0xFFE1F1E2),
+        iconColor: const Color(0xFF62B46B),
       );
     }
-    return _weatherWarningFromOfficial(
-      warning,
-      weatherIconAsset: weatherIconAsset,
+  }
+
+  _WeatherWarningData _weatherWarningFromBackend(
+    EventWeatherWarningItem item,
+  ) {
+    final title = item.title.trim().isNotEmpty
+        ? item.title.trim()
+        : '气象预警信息';
+    final warningColor = _backendWarningColor(item.level);
+    return _WeatherWarningData(
+      iconLabel: _warningIconLabel(item.typeName),
+      iconAsset: 'assets/images/weather/weather_cloudy.png',
+      title: title,
+      timeText: item.publishTime != null
+          ? _formatWarningTime(item.publishTime!)
+          : '--',
+      cardColor: _backendWarningCardColor(item.level),
+      iconColor: warningColor,
     );
+  }
+
+  Color _backendWarningColor(String level) {
+    final raw = level.toLowerCase();
+    if (raw.contains('red') || raw.contains('红')) return const Color(0xFFE55B5B);
+    if (raw.contains('orange') || raw.contains('橙')) return const Color(0xFFE49A2D);
+    if (raw.contains('yellow') || raw.contains('黄')) return const Color(0xFFF6B434);
+    if (raw.contains('blue') || raw.contains('蓝')) return const Color(0xFF4B81CD);
+    return const Color(0xFF7E8DA2);
+  }
+
+  Color _backendWarningCardColor(String level) {
+    final raw = level.toLowerCase();
+    if (raw.contains('red') || raw.contains('红')) return const Color(0xFFF8D8D8);
+    if (raw.contains('orange') || raw.contains('橙')) return const Color(0xFFFBE2C1);
+    if (raw.contains('yellow') || raw.contains('黄')) return const Color(0xFFEEC0C0);
+    if (raw.contains('blue') || raw.contains('蓝')) return const Color(0xFFDCEAFD);
+    return const Color(0xFFE7EDF4);
+  }
+
+  String _warningIconLabel(String typeName) {
+    final type = typeName.trim();
+    if (type.isEmpty) return '预警';
+    if (type.length <= 2) return type;
+    return type.substring(0, 2);
   }
 
   @override
@@ -474,11 +532,23 @@ class _WarningCardState extends State<_WarningCard> {
     return FutureBuilder<_WeatherWarningData>(
       future: _future,
       builder: (context, snapshot) {
-        final warningData = snapshot.hasData
-            ? snapshot.data!
-            : snapshot.hasError
-            ? _WeatherWarningData.error(sourceLabel: '官方预警')
-            : _WeatherWarningData.loading(sourceLabel: '官方预警');
+        _WeatherWarningData warningData;
+        if (snapshot.hasData) {
+          warningData = snapshot.data!;
+          _cachedData = warningData;
+        } else if (_cachedData != null) {
+          warningData = _cachedData!;
+        } else {
+          // Initial state: show fallback without loading indicator
+          warningData = _WeatherWarningData(
+            iconLabel: '预警',
+            iconAsset: 'assets/images/weather/weather_cloudy.png',
+            title: '暂无气象预警信息',
+            timeText: '--',
+            cardColor: const Color(0xFFE1F1E2),
+            iconColor: const Color(0xFF62B46B),
+          );
+        }
 
         return Container(
           decoration: BoxDecoration(
@@ -516,7 +586,7 @@ class _WarningCardState extends State<_WarningCard> {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '${warningData.timeText}  ·  ${warningData.sourceLabel}',
+                      warningData.timeText,
                       style: const TextStyle(
                         fontSize: 12.5,
                         color: AppTheme.textSecondary,
@@ -587,10 +657,9 @@ class _WeatherWarningData {
     required this.timeText,
     required this.cardColor,
     required this.iconColor,
-    required this.sourceLabel,
   });
 
-  factory _WeatherWarningData.loading({required String sourceLabel}) {
+  factory _WeatherWarningData.loading() {
     return _WeatherWarningData(
       iconLabel: '天气',
       iconAsset: 'assets/images/weather/weather_cloudy.png',
@@ -598,11 +667,10 @@ class _WeatherWarningData {
       timeText: '--',
       cardColor: const Color(0xFFF2F4F7),
       iconColor: const Color(0xFF9AA3AE),
-      sourceLabel: sourceLabel,
     );
   }
 
-  factory _WeatherWarningData.error({required String sourceLabel}) {
+  factory _WeatherWarningData.error() {
     return _WeatherWarningData(
       iconLabel: '提示',
       iconAsset: 'assets/images/weather/weather_cloudy.png',
@@ -610,7 +678,6 @@ class _WeatherWarningData {
       timeText: '--',
       cardColor: const Color(0xFFF2F4F7),
       iconColor: const Color(0xFF9AA3AE),
-      sourceLabel: sourceLabel,
     );
   }
 
@@ -620,146 +687,6 @@ class _WeatherWarningData {
   final String timeText;
   final Color cardColor;
   final Color iconColor;
-  final String sourceLabel;
-
-  _WeatherWarningData copyWith({
-    String? iconLabel,
-    String? iconAsset,
-    String? title,
-    String? timeText,
-    Color? cardColor,
-    Color? iconColor,
-    String? sourceLabel,
-  }) {
-    return _WeatherWarningData(
-      iconLabel: iconLabel ?? this.iconLabel,
-      iconAsset: iconAsset ?? this.iconAsset,
-      title: title ?? this.title,
-      timeText: timeText ?? this.timeText,
-      cardColor: cardColor ?? this.cardColor,
-      iconColor: iconColor ?? this.iconColor,
-      sourceLabel: sourceLabel ?? this.sourceLabel,
-    );
-  }
-}
-
-WeatherWarningItem? _pickActiveOfficialWarning(List<WeatherWarningItem> items) {
-  if (items.isEmpty) {
-    return null;
-  }
-  for (final item in items) {
-    final status = item.status.toLowerCase();
-    if (status.contains('cancel') ||
-        status.contains('remove') ||
-        status.contains('解除')) {
-      continue;
-    }
-    return item;
-  }
-  return items.first;
-}
-
-_WeatherWarningData _weatherWarningFromOfficial(
-  WeatherWarningItem item, {
-  required String weatherIconAsset,
-}) {
-  final title = item.title.trim().isNotEmpty ? item.title.trim() : '官方气象预警生效中';
-  final warningColor = _officialWarningColor(item.severityColor, item.severity);
-  return _WeatherWarningData(
-    iconLabel: _warningIconLabelFromOfficialType(item.typeName),
-    iconAsset: weatherIconAsset,
-    title: title,
-    timeText: _formatWarningTime(item.pubTime ?? DateTime.now()),
-    cardColor: _officialWarningCardColor(item.severityColor, item.severity),
-    iconColor: warningColor,
-    sourceLabel: '官方预警',
-  );
-}
-
-_WeatherWarningData _noOfficialWarningData(
-  DateTime? updateTime, {
-  required String weatherIconAsset,
-}) {
-  return _WeatherWarningData(
-    iconLabel: '天气',
-    iconAsset: weatherIconAsset,
-    title: '今日暂无官方气象预警',
-    timeText: updateTime == null ? '--' : _formatWarningTime(updateTime),
-    cardColor: const Color(0xFFE1F1E2),
-    iconColor: const Color(0xFF62B46B),
-    sourceLabel: '官方预警',
-  );
-}
-
-Color _officialWarningColor(String severityColor, String severity) {
-  final colorRaw = severityColor.toLowerCase();
-  final severityRaw = severity.toLowerCase();
-  if (colorRaw.contains('red') ||
-      colorRaw.contains('红') ||
-      severityRaw.contains('red') ||
-      severityRaw.contains('红')) {
-    return const Color(0xFFE55B5B);
-  }
-  if (colorRaw.contains('orange') ||
-      colorRaw.contains('橙') ||
-      severityRaw.contains('orange') ||
-      severityRaw.contains('橙')) {
-    return const Color(0xFFE49A2D);
-  }
-  if (colorRaw.contains('yellow') ||
-      colorRaw.contains('黄') ||
-      severityRaw.contains('yellow') ||
-      severityRaw.contains('黄')) {
-    return const Color(0xFFF6B434);
-  }
-  if (colorRaw.contains('blue') ||
-      colorRaw.contains('蓝') ||
-      severityRaw.contains('blue') ||
-      severityRaw.contains('蓝')) {
-    return const Color(0xFF4B81CD);
-  }
-  return const Color(0xFF7E8DA2);
-}
-
-Color _officialWarningCardColor(String severityColor, String severity) {
-  final colorRaw = severityColor.toLowerCase();
-  final severityRaw = severity.toLowerCase();
-  if (colorRaw.contains('red') ||
-      colorRaw.contains('红') ||
-      severityRaw.contains('red') ||
-      severityRaw.contains('红')) {
-    return const Color(0xFFF8D8D8);
-  }
-  if (colorRaw.contains('orange') ||
-      colorRaw.contains('橙') ||
-      severityRaw.contains('orange') ||
-      severityRaw.contains('橙')) {
-    return const Color(0xFFFBE2C1);
-  }
-  if (colorRaw.contains('yellow') ||
-      colorRaw.contains('黄') ||
-      severityRaw.contains('yellow') ||
-      severityRaw.contains('黄')) {
-    return const Color(0xFFEEC0C0);
-  }
-  if (colorRaw.contains('blue') ||
-      colorRaw.contains('蓝') ||
-      severityRaw.contains('blue') ||
-      severityRaw.contains('蓝')) {
-    return const Color(0xFFDCEAFD);
-  }
-  return const Color(0xFFE7EDF4);
-}
-
-String _warningIconLabelFromOfficialType(String typeName) {
-  final type = typeName.trim();
-  if (type.isEmpty) {
-    return '预警';
-  }
-  if (type.length <= 2) {
-    return type;
-  }
-  return type.substring(0, 2);
 }
 
 String _formatWarningTime(DateTime value) {
@@ -805,10 +732,13 @@ class _SummaryPanelState extends State<_SummaryPanel> {
       builder: (context, snapshot) {
         final isError = snapshot.hasError;
         final data = snapshot.data;
+        final errorMessage = snapshot.error is AppException
+            ? (snapshot.error as AppException).message
+            : null;
 
         final todayValue = data?.todayNewEventCount.toString() ?? '--';
         final pendingEventValue = data?.pendingEventCount.toString() ?? '--';
-        final pendingRiskValue = data?.pendingRiskCount.toString() ?? '--';
+        final closedEventValue = data?.closedEventCount.toString() ?? '--';
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -825,20 +755,27 @@ class _SummaryPanelState extends State<_SummaryPanel> {
                     child: _SummaryItem(
                       title: todayValue,
                       subtitle: '\u4ECA\u65E5\u65B0\u589E\u4E8B\u4EF6',
+                      onTap: () => context.push(RoutePaths.eventList),
                     ),
                   ),
                   const _SummaryDivider(),
                   Expanded(
                     child: _SummaryItem(
                       title: pendingEventValue,
-                      subtitle: '\u5F85\u54CD\u5E94\u4E8B\u4EF6',
+                      subtitle: '\u5904\u7406\u4E2D\u4E8B\u4EF6',
+                      onTap: () => context.push(
+                        RoutePaths.statisticsByTab(tab: 'event'),
+                      ),
                     ),
                   ),
                   const _SummaryDivider(),
                   Expanded(
                     child: _SummaryItem(
-                      title: pendingRiskValue,
-                      subtitle: '\u5F85\u54CD\u5E94\u98CE\u9669',
+                      title: closedEventValue,
+                      subtitle: '\u5DF2\u529E\u7ED3\u4E8B\u4EF6',
+                      onTap: () => context.push(
+                        RoutePaths.statisticsByTab(tab: 'derived-risk'),
+                      ),
                     ),
                   ),
                 ],
@@ -858,6 +795,19 @@ class _SummaryPanelState extends State<_SummaryPanel> {
                         ),
                       ),
                     ),
+                    if (errorMessage != null && errorMessage.trim().isNotEmpty)
+                      Expanded(
+                        child: Text(
+                          errorMessage,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.right,
+                          style: const TextStyle(
+                            color: Color(0xFFB06B36),
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
                     TextButton(
                       onPressed: _retry,
                       child: const Text('\u91CD\u8BD5'),
@@ -873,32 +823,44 @@ class _SummaryPanelState extends State<_SummaryPanel> {
 }
 
 class _SummaryItem extends StatelessWidget {
-  const _SummaryItem({required this.title, required this.subtitle});
+  const _SummaryItem({
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
 
   final String title;
   final String subtitle;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 14),
-      child: Column(
-        children: <Widget>[
-          Text(
-            title,
-            style: const TextStyle(
-              color: AppTheme.primaryBlue,
-              fontSize: 40,
-              fontWeight: FontWeight.w500,
-              height: 1,
-            ),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          child: Column(
+            children: <Widget>[
+              Text(
+                title,
+                style: const TextStyle(
+                  color: AppTheme.primaryBlue,
+                  fontSize: 40,
+                  fontWeight: FontWeight.w500,
+                  height: 1,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                subtitle,
+                style: const TextStyle(color: Color(0xFF66707A), fontSize: 13),
+              ),
+            ],
           ),
-          const SizedBox(height: 8),
-          Text(
-            subtitle,
-            style: const TextStyle(color: Color(0xFF66707A), fontSize: 13),
-          ),
-        ],
+        ),
       ),
     );
   }

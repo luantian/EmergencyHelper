@@ -142,7 +142,7 @@ class _EventDetailPageState extends State<EventDetailPage> {
       await EventCenter.instance.transfer(
         eventId: event.id,
         userIds: selection.userIds,
-        content: '\u8BF7\u5C3D\u5FEB\u5230\u73B0\u573A\u5904\u7406',
+        content: selection.content,
       );
       _showMessage(
         '\u4E8B\u4EF6\u5DF2\u8F6C\u6D3E\uFF1A${selection.userNames.join('\u3001')}',
@@ -312,7 +312,7 @@ class _EventDetailPageState extends State<EventDetailPage> {
       );
     }
 
-    final canOperate = event.status == EventProcessStatus.processing;
+    final canOperate = event.status != EventProcessStatus.finished;
     final canTransfer = canOperate && _canTransfer;
     final canFeedback = canOperate && _canFeedback;
     final canClose = canOperate && _canClose;
@@ -660,10 +660,13 @@ class _EventDetailPageState extends State<EventDetailPage> {
     }
 
     final options = await _collectAvailableMapOptions(location);
+    final installedOptions = options
+        .where((option) => option.installed)
+        .toList(growable: false);
     if (!mounted) {
       return;
     }
-    if (options.isEmpty) {
+    if (installedOptions.isEmpty) {
       _showMessage(
         '\u672A\u68C0\u6D4B\u5230\u53EF\u7528\u5730\u56FE\u5E94\u7528',
       );
@@ -671,42 +674,90 @@ class _EventDetailPageState extends State<EventDetailPage> {
     }
 
     _MapLaunchOption? selected;
-    if (options.length == 1) {
-      selected = options.first;
+    if (installedOptions.length == 1) {
+      selected = installedOptions.first;
     } else {
       selected = await showModalBottomSheet<_MapLaunchOption>(
         context: context,
-        backgroundColor: Colors.white,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
-        ),
+        backgroundColor: Colors.transparent,
+        isScrollControlled: false,
         builder: (sheetContext) {
           return SafeArea(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                const SizedBox(height: 10),
-                const Text(
-                  '\u9009\u62E9\u5730\u56FE',
-                  style: TextStyle(
-                    color: Color(0xFF1A2330),
-                    fontSize: 15,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                for (final option in options)
-                  ListTile(
-                    dense: true,
-                    leading: const Icon(
-                      Icons.map_outlined,
-                      color: Color(0xFF2088E8),
+            top: false,
+            child: Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              ),
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 14),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Container(
+                    width: 38,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFD4DDE8),
+                      borderRadius: BorderRadius.circular(999),
                     ),
-                    title: Text(option.label),
-                    onTap: () => Navigator.of(sheetContext).pop(option),
                   ),
-                const SizedBox(height: 8),
-              ],
+                  const SizedBox(height: 12),
+                  Row(
+                    children: <Widget>[
+                      const Icon(
+                        Icons.layers_rounded,
+                        color: Color(0xFF2D6CDF),
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        '\u9009\u62E9\u5730\u56FE',
+                        style: TextStyle(
+                          color: Color(0xFF1A2330),
+                          fontSize: 17,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const Spacer(),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF2F6FC),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          '${installedOptions.length}/${options.length}\u53EF\u7528',
+                          style: const TextStyle(
+                            color: Color(0xFF6B7C90),
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  for (var i = 0; i < options.length; i++) ...<Widget>[
+                    _buildMapOptionTile(
+                      option: options[i],
+                      onTap: () => Navigator.of(sheetContext).pop(options[i]),
+                    ),
+                    if (i != options.length - 1) const SizedBox(height: 8),
+                  ],
+                  const SizedBox(height: 10),
+                  const Text(
+                    '\u7070\u8272\u9879\u8868\u793A\u5F53\u524D\u8BBE\u5907\u672A\u5B89\u88C5',
+                    style: TextStyle(
+                      color: Color(0xFF8A97A8),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
+              ),
             ),
           );
         },
@@ -731,8 +782,9 @@ class _EventDetailPageState extends State<EventDetailPage> {
   Future<List<_MapLaunchOption>> _collectAvailableMapOptions(
     String location,
   ) async {
-    final options = <_MapLaunchOption>[
+    final candidates = <_MapLaunchOption>[
       _MapLaunchOption(
+        type: _MapAppType.baidu,
         label: '\u767E\u5EA6\u5730\u56FE',
         uri: Uri(
           scheme: 'baidumap',
@@ -745,6 +797,7 @@ class _EventDetailPageState extends State<EventDetailPage> {
         ),
       ),
       _MapLaunchOption(
+        type: _MapAppType.gaode,
         label: '\u9AD8\u5FB7\u5730\u56FE',
         uri: Uri(
           scheme: 'androidamap',
@@ -757,39 +810,178 @@ class _EventDetailPageState extends State<EventDetailPage> {
         ),
       ),
       _MapLaunchOption(
+        type: _MapAppType.tencent,
         label: '\u817E\u8BAF\u5730\u56FE',
         uri: Uri.parse(
           'qqmap://map/search?keyword=${Uri.encodeComponent(location)}&referer=EmergencyHelper',
         ),
       ),
       _MapLaunchOption(
+        type: _MapAppType.petal,
         label: '\u534E\u4E3A\u5730\u56FE',
         uri: Uri.parse(
           'petalmaps://map/search?query=${Uri.encodeComponent(location)}',
         ),
       ),
       _MapLaunchOption(
+        type: _MapAppType.system,
         label: '\u7CFB\u7EDF\u5730\u56FE',
         uri: Uri.parse('geo:0,0?q=${Uri.encodeComponent(location)}'),
       ),
     ];
 
-    final available = <_MapLaunchOption>[];
-    for (final option in options) {
+    final resolved = <_MapLaunchOption>[];
+    for (final option in candidates) {
+      var installed = false;
       try {
-        if (await canLaunchUrl(option.uri)) {
-          available.add(option);
-        }
+        installed = await canLaunchUrl(option.uri);
       } catch (_) {}
+      resolved.add(option.copyWith(installed: installed));
     }
-    if (available.isEmpty) {
-      final systemFallback = options.lastWhere(
-        (option) => option.label == '\u7CFB\u7EDF\u5730\u56FE',
-        orElse: () => options.last,
+
+    if (!resolved.any((option) => option.installed)) {
+      final systemIndex = resolved.indexWhere(
+        (option) => option.type == _MapAppType.system,
       );
-      available.add(systemFallback);
+      if (systemIndex >= 0) {
+        resolved[systemIndex] = resolved[systemIndex].copyWith(installed: true);
+      }
     }
-    return available;
+    return resolved;
+  }
+
+  Widget _buildMapOptionTile({
+    required _MapLaunchOption option,
+    required VoidCallback onTap,
+  }) {
+    final enabled = option.installed;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: enabled ? onTap : null,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+          decoration: BoxDecoration(
+            color: enabled ? const Color(0xFFF6FAFF) : const Color(0xFFF6F7F9),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: enabled
+                  ? const Color(0xFFD6E6FA)
+                  : const Color(0xFFE6EBF2),
+            ),
+          ),
+          child: Row(
+            children: <Widget>[
+              _buildMapOptionIcon(option),
+              const SizedBox(width: 11),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Text(
+                      option.label,
+                      style: TextStyle(
+                        color: enabled
+                            ? const Color(0xFF1A2330)
+                            : const Color(0xFF98A2B3),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      enabled ? option.subtitle : '\u672A\u5B89\u88C5',
+                      style: TextStyle(
+                        color: enabled
+                            ? const Color(0xFF6F7E91)
+                            : const Color(0xFFA8B1BE),
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (enabled)
+                const Icon(
+                  Icons.chevron_right_rounded,
+                  color: Color(0xFF6F7E91),
+                  size: 20,
+                )
+              else
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEAEFF6),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: const Text(
+                    '\u672A\u5B89\u88C5',
+                    style: TextStyle(
+                      color: Color(0xFF8A97A8),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMapOptionIcon(_MapLaunchOption option) {
+    final primaryColor = _mapPrimaryColor(option.type);
+    final isSystem = option.type == _MapAppType.system;
+    return Container(
+      width: 40,
+      height: 40,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: <Color>[
+            primaryColor.withValues(alpha: 0.24),
+            primaryColor.withValues(alpha: 0.1),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: primaryColor.withValues(alpha: 0.35)),
+      ),
+      child: isSystem
+          ? Icon(Icons.public_rounded, color: primaryColor, size: 20)
+          : Text(
+              option.shortLabel,
+              style: TextStyle(
+                color: primaryColor,
+                fontSize: 17,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.5,
+              ),
+            ),
+    );
+  }
+
+  Color _mapPrimaryColor(_MapAppType type) {
+    switch (type) {
+      case _MapAppType.baidu:
+        return const Color(0xFFE23D37);
+      case _MapAppType.gaode:
+        return const Color(0xFF2AA06D);
+      case _MapAppType.tencent:
+        return const Color(0xFF1E88E5);
+      case _MapAppType.petal:
+        return const Color(0xFF3A66E8);
+      case _MapAppType.system:
+        return const Color(0xFF6D7C90);
+    }
   }
 
   Widget _buildAttachments(EventRecord event) {
@@ -1236,9 +1428,18 @@ class _EventDetailPageState extends State<EventDetailPage> {
   }
 
   Widget _statusTag(String text) {
+    final isPending = text == '\u5F85\u5904\u7406';
     final isProcessing = text == '\u5904\u7406\u4E2D';
-    final fg = isProcessing ? const Color(0xFF1F9A3C) : const Color(0xFF5C687B);
-    final bg = isProcessing ? const Color(0xFFE8F8EC) : const Color(0xFFE9ECF2);
+    final fg = isPending
+        ? const Color(0xFFD87817)
+        : isProcessing
+        ? const Color(0xFF1F9A3C)
+        : const Color(0xFF586579);
+    final bg = isPending
+        ? const Color(0xFFFFF1DF)
+        : isProcessing
+        ? const Color(0xFFE8F8EC)
+        : const Color(0xFFE9ECF2);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
@@ -1288,6 +1489,8 @@ class _EventDetailPageState extends State<EventDetailPage> {
 
   String _statusText(EventProcessStatus status) {
     switch (status) {
+      case EventProcessStatus.pending:
+        return '\u5F85\u5904\u7406';
       case EventProcessStatus.processing:
         return '\u5904\u7406\u4E2D';
       case EventProcessStatus.finished:
@@ -1633,9 +1836,58 @@ class _EventDetailPageState extends State<EventDetailPage> {
   }
 }
 
+enum _MapAppType { baidu, gaode, tencent, petal, system }
+
 class _MapLaunchOption {
-  const _MapLaunchOption({required this.label, required this.uri});
+  const _MapLaunchOption({
+    required this.type,
+    required this.label,
+    required this.uri,
+    this.installed = false,
+  });
+
+  final _MapAppType type;
 
   final String label;
   final Uri uri;
+  final bool installed;
+
+  String get shortLabel {
+    switch (type) {
+      case _MapAppType.baidu:
+        return '\u767E';
+      case _MapAppType.gaode:
+        return '\u9AD8';
+      case _MapAppType.tencent:
+        return '\u817E';
+      case _MapAppType.petal:
+        return '\u82B1';
+      case _MapAppType.system:
+        return '';
+    }
+  }
+
+  String get subtitle {
+    switch (type) {
+      case _MapAppType.baidu:
+        return '\u5730\u70B9\u68C0\u7D22\u4E0E\u5BFC\u822A';
+      case _MapAppType.gaode:
+        return '\u8DEF\u7EBF\u89C4\u5212\u4E0E\u5BFC\u822A';
+      case _MapAppType.tencent:
+        return '\u516C\u4EA4\u4E0E\u51FA\u884C\u8DEF\u7EBF';
+      case _MapAppType.petal:
+        return '\u534E\u4E3A\u5730\u56FE\u5BFC\u822A';
+      case _MapAppType.system:
+        return '\u4F7F\u7528\u624B\u673A\u9ED8\u8BA4\u5730\u56FE';
+    }
+  }
+
+  _MapLaunchOption copyWith({bool? installed}) {
+    return _MapLaunchOption(
+      type: type,
+      label: label,
+      uri: uri,
+      installed: installed ?? this.installed,
+    );
+  }
 }

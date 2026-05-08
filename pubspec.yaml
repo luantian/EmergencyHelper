@@ -54,6 +54,8 @@ dependencies:
   tencent_cloud_chat_push: ^8.9.7538
   rtc_room_engine: ^4.0.1
   flutter_ringtone_player: 4.0.0+4
+  flutter_local_notifications: ^17.2.3
+  fl_chart: ^0.69.2
 
 dev_dependencies:
   flutter_test:

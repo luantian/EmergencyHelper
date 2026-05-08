@@ -9,7 +9,7 @@ import 'package:emergency_helper/src/features/trtc/data/tuicall_session_service.
 import 'package:emergency_helper/src/features/trtc/presentation/trtc_call_route_extra.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:tencent_calls_uikit/tencent_calls_uikit.dart';
+import 'package:tencent_calls_uikit/tencent_calls_uikit.dart' as tui;
 
 class TrtcCallNewPage extends StatefulWidget {
   const TrtcCallNewPage({super.key, this.routeExtra});
@@ -37,8 +37,20 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
     _invitees = _buildInviteesFromRoute(widget.routeExtra);
     _registerNameFromInvitees();
     _registerNamesFromRouteExtra();
+    _sessionService.addCallNotificationListener(_onCallNotification);
 
     Future<void>.microtask(_bootstrap);
+  }
+
+  @override
+  void dispose() {
+    _sessionService.removeCallNotificationListener(_onCallNotification);
+    super.dispose();
+  }
+
+  void _onCallNotification(String message) {
+    debugPrint('[TRTC-Page] call notification: $message');
+    _showMessage(message);
   }
 
   @override
@@ -284,15 +296,15 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
   }
 
   void _startVideoCall() {
-    _startCall(CallMediaType.video);
+    _startCall(tui.CallMediaType.video);
   }
 
   void _startAudioCall() {
-    _startCall(CallMediaType.audio);
+    _startCall(tui.CallMediaType.audio);
   }
 
-  String _mediaTypeLabel(CallMediaType mediaType) {
-    return mediaType == CallMediaType.video ? '视频' : '语音';
+  String _mediaTypeLabel(tui.CallMediaType mediaType) {
+    return mediaType == tui.CallMediaType.video ? '视频' : '语音';
   }
 
   Future<void> _bootstrap() async {
@@ -304,7 +316,7 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
     final dependencies = context.read<AppDependencies>();
     final result = await _sessionService.ensureLoggedIn(
       dependencies: dependencies,
-      roomIdHint: 100001,
+      roomIdHint: TUICallSessionService.generateRoomId(),
       forceRefreshSig: forceRefreshSig,
     );
 
@@ -316,7 +328,7 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
       _errorText = result.success ? null : result.message;
     });
     if (!result.success && result.message.trim().isNotEmpty) {
-      _showMessage(result.message);
+      _showMessage(_friendlyError(result.message));
     }
   }
 
@@ -342,6 +354,9 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
       return;
     }
 
+    // Track incoming call for multi-device sync detection.
+    _sessionService.markIncomingCall(callId);
+
     if (!mounted) {
       return;
     }
@@ -354,21 +369,24 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
     try {
       final sessionReady = await _sessionService.ensureLoggedIn(
         dependencies: dependencies,
-        roomIdHint: 100001,
+        roomIdHint: TUICallSessionService.generateRoomId(),
       );
       if (!sessionReady.success) {
         if (!mounted) {
           return;
         }
         final message =
-            sessionReady.message.isEmpty ? '通话会话初始化失败' : sessionReady.message;
+            sessionReady.message.isEmpty
+                ? '通话会话初始化失败'
+                : _friendlyError(sessionReady.message);
         setState(() {
           _errorText = message;
         });
         _showMessage(message);
         return;
       }
-      await TUICallKit.instance.join(callId);
+      _sessionService.markLocalUserAnswered();
+      await tui.TUICallKit.instance.join(callId);
     } catch (error) {
       Object resolvedError = error;
       if (_shouldRetryWithSigRefresh(error: error)) {
@@ -377,12 +395,13 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
         }
         final refreshed = await _sessionService.ensureLoggedIn(
           dependencies: dependencies,
-          roomIdHint: 100001,
+          roomIdHint: TUICallSessionService.generateRoomId(),
           forceRefreshSig: true,
         );
         if (refreshed.success) {
           try {
-            await TUICallKit.instance.join(callId);
+            _sessionService.markLocalUserAnswered();
+            await tui.TUICallKit.instance.join(callId);
             return;
           } catch (retryError) {
             resolvedError = retryError;
@@ -393,7 +412,7 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
       if (!mounted) {
         return;
       }
-      final message = '加入通话失败: $resolvedError';
+      final message = _friendlyError('加入通话失败: $resolvedError');
       setState(() {
         _errorText = message;
       });
@@ -422,6 +441,7 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
           confirmButtonText: '确认邀请',
           emptySelectionHint: '请至少选择一位成员',
           initialSelectedUserIds: selectedIds,
+          showContentField: false,
         ),
       ),
     );
@@ -458,7 +478,7 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
     });
   }
 
-  Future<void> _startCall(CallMediaType mediaType) async {
+  Future<void> _startCall(tui.CallMediaType mediaType) async {
     if (_submitting) {
       return;
     }
@@ -476,10 +496,10 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
       final dependencies = context.read<AppDependencies>();
       final sessionReady = await _sessionService.ensureLoggedIn(
         dependencies: dependencies,
-        roomIdHint: 100001,
+        roomIdHint: TUICallSessionService.generateRoomId(),
       );
       if (!sessionReady.success) {
-        _showMessage(sessionReady.message.isEmpty ? '通话会话初始化失败' : sessionReady.message);
+        _showMessage(sessionReady.message.isEmpty ? '通话会话初始化失败' : _friendlyError(sessionReady.message));
         return;
       }
 
@@ -518,7 +538,7 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
         'source': 'emergency_helper',
         'page': 'trtc_call',
         'type': 'call_invite',
-        'mediaType': mediaType == CallMediaType.video ? 'video' : 'audio',
+        'mediaType': mediaType == tui.CallMediaType.video ? 'video' : 'audio',
         'callerId': selfUserId,
         'autoJoin': 1,
         'autoEnter': 1,
@@ -532,10 +552,10 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
       if (targetNames.isNotEmpty) {
         callUserData['calleeNames'] = targetNames.join(',');
       }
-      final callParams = CallParams(userData: jsonEncode(callUserData));
+      final callParams = tui.CallParams(userData: jsonEncode(callUserData));
       debugPrint('[TRTC] call userData=${callParams.userData}');
 
-      var result = await TUICallKit.instance.calls(
+      var result = await tui.TUICallKit.instance.calls(
         targetIds,
         mediaType,
         callParams,
@@ -558,11 +578,11 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
         );
         final refreshed = await _sessionService.ensureLoggedIn(
           dependencies: dependencies,
-          roomIdHint: 100001,
+          roomIdHint: TUICallSessionService.generateRoomId(),
           forceRefreshSig: true,
         );
         if (refreshed.success) {
-          result = await TUICallKit.instance.calls(
+          result = await tui.TUICallKit.instance.calls(
             targetIds,
             mediaType,
             callParams,
@@ -573,17 +593,17 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
             'message=${result.errorMessage}',
           );
         } else {
-          _showMessage(refreshed.message.isEmpty ? '通话会话初始化失败' : refreshed.message);
+          _showMessage(refreshed.message.isEmpty ? '通话会话初始化失败' : _friendlyError(refreshed.message));
           return;
         }
       }
 
       if (!result.isSuccess && mounted) {
-        _showMessage('发起$mediaTypeText通话失败: ${result.errorMessage ?? "未知错误"}');
+        _showMessage(_friendlyError('发起$mediaTypeText通话失败: ${result.errorMessage ?? ""}'));
       }
     } catch (error) {
       if (mounted) {
-        _showMessage('发起$mediaTypeText通话失败: $error');
+        _showMessage(_friendlyError('发起$mediaTypeText通话失败: $error'));
       }
     } finally {
       if (mounted) {
@@ -595,7 +615,7 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
   }
 
   Future<void> _preloadUserInfo(List<String> userIds) async {
-    final contactListStore = ContactListStore.create();
+    final contactListStore = tui.ContactListStore.create();
     for (final userId in userIds) {
       try {
         await contactListStore.addFriend(userID: userId);
@@ -730,6 +750,29 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
         normalized.contains('sig') ||
         normalized.contains('签名') ||
         normalized.contains('未登录');
+  }
+
+  String _friendlyError(Object raw) {
+    final text = raw.toString().toLowerCase();
+    if (text.contains('network') ||
+        text.contains('timeout') ||
+        text.contains('connect')) {
+      return '网络异常，请检查网络后重试';
+    }
+    if (text.contains('sig') ||
+        text.contains('signature') ||
+        text.contains('签名') ||
+        text.contains('auth') ||
+        text.contains('permission')) {
+      return '登录已过期，请退出后重新登录';
+    }
+    if (text.contains('call') || text.contains('invite')) {
+      return '呼叫失败，对方可能不在线';
+    }
+    if (text.contains('join') || text.contains('enter')) {
+      return '加入通话失败，请重试';
+    }
+    return '操作失败，请稍后重试';
   }
 
   void _showMessage(String message) {

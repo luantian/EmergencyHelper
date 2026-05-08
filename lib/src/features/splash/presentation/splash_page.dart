@@ -116,9 +116,16 @@ class _SplashPageState extends State<SplashPage> {
     try {
       await TUICallSessionService.instance.logoutSilently(
         dependencies: dependencies,
-      );
-      await dependencies.pushService.unbindAlias();
-      await dependencies.pushService.clearBadgeAndNotifications();
+      ).timeout(const Duration(seconds: 4), onTimeout: () {});
+      await dependencies.pushService
+          .unregisterPush()
+          .timeout(const Duration(seconds: 3), onTimeout: () {});
+      await dependencies.pushService
+          .unbindAlias()
+          .timeout(const Duration(seconds: 2), onTimeout: () {});
+      await dependencies.pushService
+          .clearBadgeAndNotifications()
+          .timeout(const Duration(seconds: 2), onTimeout: () {});
     } catch (_) {}
   }
 

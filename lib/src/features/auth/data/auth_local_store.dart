@@ -9,7 +9,7 @@ class AuthLocalStore {
   static const String _expiresTimeKey = 'auth_access_expires_time_ms';
   static const String _permissionInfoKey = 'auth_permission_info_json';
   static const String _rememberAccountKey = 'auth_remember_account';
-  static const String _legacyRememberPasswordKey = 'auth_remember_password';
+  static const String _rememberPasswordKey = 'auth_remember_password';
   static const String _rememberedUsernameKey = 'auth_remembered_username';
   static const String _rememberedPasswordKey = 'auth_remembered_password';
   static final Map<String, String> _memoryStore = <String, String>{};
@@ -106,54 +106,72 @@ class AuthLocalStore {
   }
 
   Future<void> saveRememberedCredential({
-    required bool rememberAccount,
+    required bool rememberPassword,
     required String username,
+    String? password,
   }) async {
     final normalizedUsername = username.trim();
+    final normalizedPassword = (password ?? '').trim();
     final prefs = await _getPrefs();
     if (prefs != null) {
-      await prefs.setBool(_rememberAccountKey, rememberAccount);
-      await prefs.remove(_legacyRememberPasswordKey);
-      if (rememberAccount && normalizedUsername.isNotEmpty) {
+      await prefs.setBool(_rememberAccountKey, normalizedUsername.isNotEmpty);
+      await prefs.setBool(_rememberPasswordKey, rememberPassword);
+      if (normalizedUsername.isNotEmpty) {
         await prefs.setString(_rememberedUsernameKey, normalizedUsername);
       } else {
         await prefs.remove(_rememberedUsernameKey);
       }
-      // Password is no longer persisted locally for security.
-      await prefs.remove(_rememberedPasswordKey);
+      if (rememberPassword && normalizedPassword.isNotEmpty) {
+        await prefs.setString(_rememberedPasswordKey, normalizedPassword);
+      } else {
+        await prefs.remove(_rememberedPasswordKey);
+      }
       return;
     }
 
-    _memoryBoolStore[_rememberAccountKey] = rememberAccount;
-    _memoryBoolStore.remove(_legacyRememberPasswordKey);
-    if (rememberAccount && normalizedUsername.isNotEmpty) {
+    _memoryBoolStore[_rememberAccountKey] = normalizedUsername.isNotEmpty;
+    _memoryBoolStore[_rememberPasswordKey] = rememberPassword;
+    if (normalizedUsername.isNotEmpty) {
       _memoryStore[_rememberedUsernameKey] = normalizedUsername;
     } else {
       _memoryStore.remove(_rememberedUsernameKey);
     }
-    _memoryStore.remove(_rememberedPasswordKey);
+    if (rememberPassword && normalizedPassword.isNotEmpty) {
+      _memoryStore[_rememberedPasswordKey] = normalizedPassword;
+    } else {
+      _memoryStore.remove(_rememberedPasswordKey);
+    }
   }
 
   Future<RememberedCredential> getRememberedCredential() async {
     final prefs = await _getPrefs();
     if (prefs != null) {
-      final rememberAccount =
-          prefs.getBool(_rememberAccountKey) ??
-          (prefs.getBool(_legacyRememberPasswordKey) ?? false);
+      final rememberPassword = prefs.getBool(_rememberPasswordKey) ?? false;
       final username = prefs.getString(_rememberedUsernameKey) ?? '';
-      await prefs.remove(_rememberedPasswordKey);
+      final password = rememberPassword
+          ? (prefs.getString(_rememberedPasswordKey) ?? '')
+          : '';
+      if (!rememberPassword) {
+        await prefs.remove(_rememberedPasswordKey);
+      }
       return RememberedCredential(
-        rememberAccount: rememberAccount,
-        username: rememberAccount ? username : '',
+        rememberPassword: rememberPassword,
+        username: username,
+        password: password,
       );
     }
-    final rememberAccount =
-        _memoryBoolStore[_rememberAccountKey] ??
-        (_memoryBoolStore[_legacyRememberPasswordKey] ?? false);
+    final rememberPassword = _memoryBoolStore[_rememberPasswordKey] ?? false;
     final username = _memoryStore[_rememberedUsernameKey] ?? '';
+    final password = rememberPassword
+        ? (_memoryStore[_rememberedPasswordKey] ?? '')
+        : '';
+    if (!rememberPassword) {
+      _memoryStore.remove(_rememberedPasswordKey);
+    }
     return RememberedCredential(
-      rememberAccount: rememberAccount,
-      username: rememberAccount ? username : '',
+      rememberPassword: rememberPassword,
+      username: username,
+      password: password,
     );
   }
 
@@ -168,16 +186,15 @@ class AuthLocalStore {
 
 class RememberedCredential {
   const RememberedCredential({
-    required this.rememberAccount,
+    required this.rememberPassword,
     required this.username,
+    this.password = '',
   });
 
-  final bool rememberAccount;
+  final bool rememberPassword;
   final String username;
+  final String password;
 
-  @Deprecated('Password is no longer persisted.')
-  String get password => '';
-
-  @Deprecated('Use rememberAccount instead.')
-  bool get rememberPassword => rememberAccount;
+  @Deprecated('账号在登录成功后默认保存，请使用 username 判断。')
+  bool get rememberAccount => username.trim().isNotEmpty;
 }

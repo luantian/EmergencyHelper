@@ -7,11 +7,13 @@ import 'package:emergency_helper/src/core/errors/app_exception.dart';
 import 'package:emergency_helper/src/core/network/api_client.dart';
 import 'package:flutter/foundation.dart';
 
-enum EventProcessStatus { processing, finished }
+enum EventProcessStatus { pending, processing, finished }
 
 extension EventProcessStatusX on EventProcessStatus {
   String get label {
     switch (this) {
+      case EventProcessStatus.pending:
+        return '\u5F85\u5904\u7406';
       case EventProcessStatus.processing:
         return '\u5904\u7406\u4E2D';
       case EventProcessStatus.finished:
@@ -25,8 +27,10 @@ extension EventProcessStatusX on EventProcessStatus {
 
   List<int> get apiCodes {
     switch (this) {
+      case EventProcessStatus.pending:
+        return const <int>[0];
       case EventProcessStatus.processing:
-        return const <int>[0, 1];
+        return const <int>[1];
       case EventProcessStatus.finished:
         return const <int>[2];
     }
@@ -136,6 +140,7 @@ class EventCenter extends ChangeNotifier {
   ApiClient? _apiClient;
   final Map<EventProcessStatus, List<EventRecord>> _statusCache =
       <EventProcessStatus, List<EventRecord>>{
+        EventProcessStatus.pending: <EventRecord>[],
         EventProcessStatus.processing: <EventRecord>[],
         EventProcessStatus.finished: <EventRecord>[],
       };
@@ -151,6 +156,7 @@ class EventCenter extends ChangeNotifier {
   }
 
   void resetSessionCache({bool notify = true}) {
+    _statusCache[EventProcessStatus.pending] = <EventRecord>[];
     _statusCache[EventProcessStatus.processing] = <EventRecord>[];
     _statusCache[EventProcessStatus.finished] = <EventRecord>[];
     _eventById.clear();
@@ -203,6 +209,8 @@ class EventCenter extends ChangeNotifier {
     final mappedById = <String, EventRecord>{};
     var receivedCount = 0;
     var hasMore = false;
+    AppException? lastStatusError;
+    var hasStatusRequestSuccess = false;
 
     // `processing` currently maps to multiple backend states (0/1).
     // If we query each state with the same pageNo and then merge, pagination
@@ -212,33 +220,42 @@ class EventCenter extends ChangeNotifier {
     if (useMergedPagination) {
       final targetCount = safePageNo * safePageSize;
       for (final statusCode in statusCodes) {
-        final response = await apiClient.getJson(
-          '/admin-api/api/event/report/page',
-          queryParameters: <String, dynamic>{
-            'pageNo': 1,
-            'pageSize': targetCount,
-            'status': statusCode,
-            if (normalizedKeyword.isNotEmpty) 'name': normalizedKeyword,
-          },
-        );
-        final data = _expectSuccessAndGetData(
-          response,
-          defaultErrorMessage:
-              '\u52A0\u8F7D\u4E8B\u4EF6\u5217\u8868\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5',
-        );
-        final dataMap = _asMap(data);
-        final list = _asMapList(dataMap?['list']);
-        receivedCount += list.length;
-        if (list.length >= targetCount) {
-          hasMore = true;
-        }
-        for (final item in list) {
-          final event = _eventFromMap(item);
-          if (event.status != status || event.id.trim().isEmpty) {
-            continue;
+        try {
+          final response = await apiClient.getJson(
+            '/admin-api/event/report/page',
+            queryParameters: <String, dynamic>{
+              'pageNo': 1,
+              'pageSize': targetCount,
+              'status': statusCode,
+              if (normalizedKeyword.isNotEmpty) 'name': normalizedKeyword,
+            },
+          );
+          final data = _expectSuccessAndGetData(
+            response,
+            defaultErrorMessage:
+                '\u52A0\u8F7D\u4E8B\u4EF6\u5217\u8868\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5',
+          );
+          hasStatusRequestSuccess = true;
+          final dataMap = _asMap(data);
+          final list = _asMapList(dataMap?['list']);
+          receivedCount += list.length;
+          if (list.length >= targetCount) {
+            hasMore = true;
           }
-          mappedById[event.id] = event;
+          for (final item in list) {
+            final event = _eventFromMap(item, requestedStatus: status);
+            if (event.status != status || event.id.trim().isEmpty) {
+              continue;
+            }
+            mappedById[event.id] = event;
+          }
+        } on AppException catch (error) {
+          lastStatusError = error;
+          continue;
         }
+      }
+      if (!hasStatusRequestSuccess && lastStatusError != null) {
+        throw lastStatusError;
       }
 
       final mapped = mappedById.values.toList()
@@ -268,33 +285,42 @@ class EventCenter extends ChangeNotifier {
     }
 
     for (final statusCode in statusCodes) {
-      final response = await apiClient.getJson(
-        '/admin-api/api/event/report/page',
-        queryParameters: <String, dynamic>{
-          'pageNo': safePageNo,
-          'pageSize': safePageSize,
-          'status': statusCode,
-          if (normalizedKeyword.isNotEmpty) 'name': normalizedKeyword,
-        },
-      );
-      final data = _expectSuccessAndGetData(
-        response,
-        defaultErrorMessage:
-            '\u52A0\u8F7D\u4E8B\u4EF6\u5217\u8868\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5',
-      );
-      final dataMap = _asMap(data);
-      final list = _asMapList(dataMap?['list']);
-      receivedCount += list.length;
-      if (list.length >= safePageSize) {
-        hasMore = true;
-      }
-      for (final item in list) {
-        final event = _eventFromMap(item);
-        if (event.status != status || event.id.trim().isEmpty) {
-          continue;
+      try {
+        final response = await apiClient.getJson(
+          '/admin-api/event/report/page',
+          queryParameters: <String, dynamic>{
+            'pageNo': safePageNo,
+            'pageSize': safePageSize,
+            'status': statusCode,
+            if (normalizedKeyword.isNotEmpty) 'name': normalizedKeyword,
+          },
+        );
+        final data = _expectSuccessAndGetData(
+          response,
+          defaultErrorMessage:
+              '\u52A0\u8F7D\u4E8B\u4EF6\u5217\u8868\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5',
+        );
+        hasStatusRequestSuccess = true;
+        final dataMap = _asMap(data);
+        final list = _asMapList(dataMap?['list']);
+        receivedCount += list.length;
+        if (list.length >= safePageSize) {
+          hasMore = true;
         }
-        mappedById[event.id] = event;
+        for (final item in list) {
+          final event = _eventFromMap(item, requestedStatus: status);
+          if (event.status != status || event.id.trim().isEmpty) {
+            continue;
+          }
+          mappedById[event.id] = event;
+        }
+      } on AppException catch (error) {
+        lastStatusError = error;
+        continue;
       }
+    }
+    if (!hasStatusRequestSuccess && lastStatusError != null) {
+      throw lastStatusError;
     }
     final mapped = mappedById.values.toList()
       ..sort((a, b) => b.reportTime.compareTo(a.reportTime));
@@ -329,7 +355,7 @@ class EventCenter extends ChangeNotifier {
     await _ensureEventTypeCacheLoaded(apiClient);
     await _ensureStreetDeptCacheLoaded(apiClient);
     final response = await apiClient.getJson(
-      '/admin-api/api/event/report/$normalizedEventId',
+      '/admin-api/event/report/$normalizedEventId',
     );
     final data = _expectSuccessAndGetData(
       response,
@@ -347,7 +373,7 @@ class EventCenter extends ChangeNotifier {
     final cachedDetail = _eventById[normalizedEventId];
     final detail = _eventFromMap(map);
     final dynamics = await _loadEventOperationListSafely(
-      path: '/admin-api/api/event/report/dynamic/list',
+      path: '/admin-api/event/report/dynamic/list',
       eventId: normalizedEventId,
       defaultErrorMessage: '\u52A0\u8F7D\u4E8B\u4EF6\u52A8\u6001\u5931\u8D25',
     );
@@ -389,7 +415,7 @@ class EventCenter extends ChangeNotifier {
   }) async {
     final apiClient = _ensureApiClient();
     final response = await apiClient.postJson(
-      '/admin-api/api/event/report',
+      '/admin-api/event/report',
       data: <String, dynamic>{
         'name': name,
         'description': description,
@@ -397,8 +423,7 @@ class EventCenter extends ChangeNotifier {
         'type': type,
         'longitude': ?longitude,
         'latitude': ?latitude,
-        if (locationName != null && locationName.trim().isNotEmpty)
-          'locationName': locationName.trim(),
+        'locationName': locationName?.trim() ?? '',
         'deptId': ?deptId,
         if (attachments.isNotEmpty)
           'attachmentUrls': attachments.map((item) => item.toJson()).toList(),
@@ -410,6 +435,7 @@ class EventCenter extends ChangeNotifier {
     );
     final newId = _asInt(data);
     try {
+      await loadEvents(status: EventProcessStatus.pending);
       await loadEvents(status: EventProcessStatus.processing);
       if (newId != null) {
         await loadEventDetail(newId.toString());
@@ -432,7 +458,7 @@ class EventCenter extends ChangeNotifier {
   }) async {
     final apiClient = _ensureApiClient();
     final response = await apiClient.putJson(
-      '/admin-api/api/event/report',
+      '/admin-api/event/report',
       data: <String, dynamic>{
         'id': id,
         'name': name,
@@ -441,8 +467,7 @@ class EventCenter extends ChangeNotifier {
         'type': type,
         'longitude': ?longitude,
         'latitude': ?latitude,
-        if (locationName != null && locationName.trim().isNotEmpty)
-          'locationName': locationName.trim(),
+        'locationName': locationName?.trim() ?? '',
         'deptId': ?deptId,
         if (attachments.isNotEmpty)
           'attachmentUrls': attachments.map((item) => item.toJson()).toList(),
@@ -450,6 +475,7 @@ class EventCenter extends ChangeNotifier {
     );
     _expectSuccessAndGetData(response, defaultErrorMessage: '更新事件失败');
     try {
+      await loadEvents(status: EventProcessStatus.pending);
       await loadEvents(status: EventProcessStatus.processing);
       await loadEvents(status: EventProcessStatus.finished);
       await loadEventDetail(id.toString());
@@ -470,7 +496,7 @@ class EventCenter extends ChangeNotifier {
     }
 
     final response = await apiClient.postJson(
-      '/admin-api/api/event/report/feedback',
+      '/admin-api/event/report/feedback',
       data: <String, dynamic>{
         'eventId': eventIdValue,
         'content': content,
@@ -481,6 +507,7 @@ class EventCenter extends ChangeNotifier {
     _expectSuccessAndGetData(response, defaultErrorMessage: '提交反馈失败');
     try {
       await loadEventDetail(eventId);
+      await loadEvents(status: EventProcessStatus.pending);
       await loadEvents(status: EventProcessStatus.processing);
     } catch (_) {}
   }
@@ -502,7 +529,7 @@ class EventCenter extends ChangeNotifier {
     }
 
     final response = await apiClient.postJson(
-      '/admin-api/api/event/report/transfer',
+      '/admin-api/event/report/transfer',
       data: <String, dynamic>{
         'eventId': eventIdValue,
         'userIds': userIds,
@@ -512,6 +539,7 @@ class EventCenter extends ChangeNotifier {
     _expectSuccessAndGetData(response, defaultErrorMessage: '转派失败');
     try {
       await loadEventDetail(eventId);
+      await loadEvents(status: EventProcessStatus.pending);
       await loadEvents(status: EventProcessStatus.processing);
     } catch (_) {}
   }
@@ -529,11 +557,12 @@ class EventCenter extends ChangeNotifier {
     }
 
     final response = await apiClient.postJson(
-      '/admin-api/api/event/report/close',
+      '/admin-api/event/report/close',
       data: <String, dynamic>{'id': eventIdValue, 'closeReason': closeReason},
     );
     _expectSuccessAndGetData(response, defaultErrorMessage: '办结失败');
     try {
+      await loadEvents(status: EventProcessStatus.pending);
       await loadEvents(status: EventProcessStatus.processing);
       await loadEvents(status: EventProcessStatus.finished);
       await loadEventDetail(eventId);
@@ -541,24 +570,18 @@ class EventCenter extends ChangeNotifier {
   }
 
   Future<bool> canTransfer(String eventId) {
-    return _checkCanOperate(
-      '/admin-api/api/event/report/transfer/can',
-      eventId,
-    );
+    return _checkCanOperate('/admin-api/event/report/transfer/can', eventId);
   }
 
   Future<bool> canFeedback(String eventId) {
-    return _checkCanOperate(
-      '/admin-api/api/event/report/feedback/can',
-      eventId,
-    );
+    return _checkCanOperate('/admin-api/event/report/feedback/can', eventId);
   }
 
   Future<bool> canClose() async {
     final apiClient = _ensureApiClient();
     try {
       final response = await apiClient.getJson(
-        '/admin-api/api/event/report/close/can',
+        '/admin-api/event/report/close/can',
       );
       final data = _expectSuccessAndGetData(
         response,
@@ -1065,6 +1088,9 @@ class EventCenter extends ChangeNotifier {
     if (detail.id.trim().isEmpty) {
       return;
     }
+    final pendingList = List<EventRecord>.from(
+      _statusCache[EventProcessStatus.pending] ?? const <EventRecord>[],
+    );
     final processingList = List<EventRecord>.from(
       _statusCache[EventProcessStatus.processing] ?? const <EventRecord>[],
     );
@@ -1072,10 +1098,14 @@ class EventCenter extends ChangeNotifier {
       _statusCache[EventProcessStatus.finished] ?? const <EventRecord>[],
     );
 
+    pendingList.removeWhere((item) => item.id == detail.id);
     processingList.removeWhere((item) => item.id == detail.id);
     finishedList.removeWhere((item) => item.id == detail.id);
 
-    if (detail.status == EventProcessStatus.processing) {
+    if (detail.status == EventProcessStatus.pending) {
+      pendingList.add(detail);
+      pendingList.sort((a, b) => b.reportTime.compareTo(a.reportTime));
+    } else if (detail.status == EventProcessStatus.processing) {
       processingList.add(detail);
       processingList.sort((a, b) => b.reportTime.compareTo(a.reportTime));
     } else {
@@ -1083,6 +1113,7 @@ class EventCenter extends ChangeNotifier {
       finishedList.sort((a, b) => b.reportTime.compareTo(a.reportTime));
     }
 
+    _statusCache[EventProcessStatus.pending] = pendingList;
     _statusCache[EventProcessStatus.processing] = processingList;
     _statusCache[EventProcessStatus.finished] = finishedList;
   }
@@ -1113,12 +1144,18 @@ class EventCenter extends ChangeNotifier {
     return merged;
   }
 
-  EventRecord _eventFromMap(Map<String, dynamic> map) {
+  EventRecord _eventFromMap(
+    Map<String, dynamic> map, {
+    EventProcessStatus? requestedStatus,
+  }) {
     final id = _asText(map['id']) ?? '';
     final statusCode = _asInt(map['status']) ?? 0;
-    final status = statusCode == 2
-        ? EventProcessStatus.finished
-        : EventProcessStatus.processing;
+    final statusName = _asText(map['statusName']);
+    final status = _resolveEventStatus(
+      statusCode: statusCode,
+      statusName: statusName,
+      requestedStatus: requestedStatus,
+    );
     final reportTime =
         _parseDateTime(map['reportTime']) ??
         _parseDateTime(map['createTime']) ??
@@ -1149,7 +1186,7 @@ class EventCenter extends ChangeNotifier {
       timeline: <EventTimelineItem>[
         EventTimelineItem(
           time: reportTime,
-          stage: _asText(map['statusName']) ?? _stageFromStatusCode(statusCode),
+          stage: statusName ?? _stageFromStatusCode(statusCode),
           content: _asText(map['description']),
           operatorName: _asText(map['reportUserName']),
           attachmentName: attachmentName,
@@ -1269,9 +1306,78 @@ class EventCenter extends ChangeNotifier {
         return '\u5DF2\u529E\u7ED3';
       case 1:
         return '\u5904\u7406\u4E2D';
+      case 0:
+        return '\u5F85\u5904\u7406';
       default:
-        return '\u5DF2\u4E0A\u62A5';
+        return '\u5F85\u5904\u7406';
     }
+  }
+
+  EventProcessStatus _resolveEventStatus({
+    required int statusCode,
+    required String? statusName,
+    EventProcessStatus? requestedStatus,
+  }) {
+    final rawName = statusName?.trim() ?? '';
+    if (rawName.isNotEmpty) {
+      if (_looksLikeFinishedStatus(rawName)) {
+        return EventProcessStatus.finished;
+      }
+      if (_looksLikePendingStatus(rawName)) {
+        return EventProcessStatus.pending;
+      }
+      if (_looksLikeProcessingStatus(rawName)) {
+        return EventProcessStatus.processing;
+      }
+    }
+
+    if (statusCode == 2) {
+      return EventProcessStatus.finished;
+    }
+    if (statusCode == 1) {
+      if (requestedStatus == EventProcessStatus.finished ||
+          requestedStatus == EventProcessStatus.processing) {
+        return requestedStatus!;
+      }
+      return EventProcessStatus.processing;
+    }
+    if (statusCode == 0) {
+      if (requestedStatus == EventProcessStatus.processing ||
+          requestedStatus == EventProcessStatus.pending) {
+        return requestedStatus!;
+      }
+      return EventProcessStatus.pending;
+    }
+    return requestedStatus ?? EventProcessStatus.processing;
+  }
+
+  bool _looksLikeFinishedStatus(String raw) {
+    final text = raw.toLowerCase();
+    return text.contains('\u529E\u7ED3') ||
+        text.contains('\u5DF2\u7ED3') ||
+        text.contains('\u5DF2\u529E') ||
+        text.contains('\u5B8C\u7ED3') ||
+        text.contains('\u5DF2\u5B8C\u6210') ||
+        text.contains('finish') ||
+        text.contains('closed');
+  }
+
+  bool _looksLikePendingStatus(String raw) {
+    final text = raw.toLowerCase();
+    return text.contains('\u5F85\u5904\u7406') ||
+        text.contains('\u5F85\u54CD\u5E94') ||
+        text.contains('\u5F85\u529E') ||
+        text.contains('\u672A\u5904\u7406') ||
+        text.contains('pending');
+  }
+
+  bool _looksLikeProcessingStatus(String raw) {
+    final text = raw.toLowerCase();
+    return text.contains('\u5904\u7406\u4E2D') ||
+        text.contains('\u5904\u7F6E\u4E2D') ||
+        text.contains('\u529E\u7406\u4E2D') ||
+        text.contains('\u8FDB\u884C\u4E2D') ||
+        text.contains('processing');
   }
 
   String _fallbackLevelName(int? code) {

@@ -56,9 +56,7 @@ class FormOptionService {
 
     for (final row in rows) {
       final id =
-          _asText(row['id']) ??
-          _asText(row['deptId']) ??
-          _asText(row['value']);
+          _asText(row['id']) ?? _asText(row['deptId']) ?? _asText(row['value']);
       final name =
           _asText(row['name']) ??
           _asText(row['deptName']) ??
@@ -79,7 +77,7 @@ class FormOptionService {
     final combined = <String, FormOption>{};
     for (final status in <int>[0, 1, 2]) {
       final response = await apiClient.getJson(
-        '/admin-api/api/event/report/page',
+        '/admin-api/event/report/page',
         queryParameters: <String, dynamic>{
           'pageNo': 1,
           'pageSize': 200,

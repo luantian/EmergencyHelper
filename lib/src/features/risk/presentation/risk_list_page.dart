@@ -1,4 +1,4 @@
-import 'package:emergency_helper/src/core/routing/route_paths.dart';
+﻿import 'package:emergency_helper/src/core/routing/route_paths.dart';
 import 'package:emergency_helper/src/features/risk/data/risk_center.dart';
 import 'package:emergency_helper/src/core/theme/app_theme.dart';
 import 'package:flutter/material.dart';
@@ -90,6 +90,13 @@ class _RiskListPageState extends State<RiskListPage> {
                         ),
                         isDense: true,
                         border: InputBorder.none,
+                        enabledBorder: InputBorder.none,
+                        focusedBorder: InputBorder.none,
+                        disabledBorder: InputBorder.none,
+                        errorBorder: InputBorder.none,
+                        focusedErrorBorder: InputBorder.none,
+                        filled: false,
+                        fillColor: Colors.transparent,
                         prefixIcon: Icon(
                           Icons.search_rounded,
                           size: 18,

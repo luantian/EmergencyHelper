@@ -10,6 +10,7 @@ import 'package:emergency_helper/src/core/theme/app_theme.dart';
 import 'package:emergency_helper/src/core/widgets/app_center_toast.dart';
 import 'package:emergency_helper/src/core/widgets/app_loading_overlay.dart';
 import 'package:emergency_helper/src/features/risk/data/risk_center.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_baidu_mapapi_base/flutter_baidu_mapapi_base.dart';
@@ -622,6 +623,7 @@ class _RiskReportPageState extends State<RiskReportPage> {
     final picked = await showModalBottomSheet<_RiskPickedLocationResult>(
       context: context,
       isScrollControlled: true,
+      enableDrag: false,
       backgroundColor: Colors.transparent,
       builder: (context) => const _RiskBaiduMapPickerSheet(),
     );
@@ -630,9 +632,15 @@ class _RiskReportPageState extends State<RiskReportPage> {
       return;
     }
 
+    final matchedStreet = _findStreetOptionByHint(picked.streetHint);
     setState(() {
       _pickedCoordinate = picked.coordinate;
       _locationController.text = picked.address;
+      if (matchedStreet != null) {
+        _streetDeptIdValue = matchedStreet.value;
+        _street = matchedStreet.label;
+        _streetDeptId = _asInt(matchedStreet.value);
+      }
     });
   }
 
@@ -1230,6 +1238,93 @@ class _RiskReportPageState extends State<RiskReportPage> {
     return null;
   }
 
+  FormOption? _findStreetOptionByHint(String? streetHint) {
+    final hint = streetHint?.trim();
+    if (hint == null || hint.isEmpty) {
+      return null;
+    }
+
+    // 1) exact match first
+    for (final option in _streetOptions) {
+      if (option.label.trim() == hint || option.value.trim() == hint) {
+        return option;
+      }
+    }
+
+    // 2) fuzzy match in normalized tokens
+    final normalizedHint = _normalizeStreetText(hint);
+    if (normalizedHint.isEmpty) {
+      return null;
+    }
+    FormOption? best;
+    var bestScore = -1;
+    for (final option in _streetOptions) {
+      final label = _normalizeStreetText(option.label);
+      final value = _normalizeStreetText(option.value);
+      final score = _streetMatchScore(
+        normalizedHint: normalizedHint,
+        normalizedLabel: label,
+        normalizedValue: value,
+      );
+      if (score > bestScore) {
+        bestScore = score;
+        best = option;
+      }
+    }
+    return bestScore > 0 ? best : null;
+  }
+
+  String _normalizeStreetText(String value) {
+    var text = value.trim();
+    text = text.replaceAll(RegExp(r'\s+'), '');
+    text = text.replaceAll('（', '(').replaceAll('）', ')');
+    text = text.replaceAll('街道办事处', '街道');
+    text = text.replaceAll('镇人民政府', '镇');
+    return text;
+  }
+
+  int _streetMatchScore({
+    required String normalizedHint,
+    required String normalizedLabel,
+    required String normalizedValue,
+  }) {
+    var score = 0;
+    if (normalizedLabel == normalizedHint || normalizedValue == normalizedHint) {
+      return 200;
+    }
+    if (normalizedLabel.isNotEmpty &&
+        (normalizedLabel.contains(normalizedHint) ||
+            normalizedHint.contains(normalizedLabel))) {
+      score = score > 120 ? score : 120;
+    }
+    if (normalizedValue.isNotEmpty &&
+        (normalizedValue.contains(normalizedHint) ||
+            normalizedHint.contains(normalizedValue))) {
+      score = score > 110 ? score : 110;
+    }
+    final hintTokens = _streetTokens(normalizedHint);
+    for (final token in hintTokens) {
+      if (token.length < 2) {
+        continue;
+      }
+      if (normalizedLabel.contains(token)) {
+        score += 8;
+      } else if (normalizedValue.contains(token)) {
+        score += 6;
+      }
+    }
+    return score;
+  }
+
+  List<String> _streetTokens(String value) {
+    final separators = RegExp(r'[省市区县旗镇乡街道办事处路号村社区组]');
+    return value
+        .split(separators)
+        .map((segment) => segment.trim())
+        .where((segment) => segment.isNotEmpty)
+        .toList(growable: false);
+  }
+
   void _showMessage(String message) {
     AppCenterToast.show(context, message);
   }
@@ -1328,10 +1423,12 @@ class _RiskPickedLocationResult {
   const _RiskPickedLocationResult({
     required this.coordinate,
     required this.address,
+    this.streetHint,
   });
 
   final BMFCoordinate coordinate;
   final String address;
+  final String? streetHint;
 }
 
 class _RiskBaiduMapPickerSheet extends StatefulWidget {
@@ -1356,9 +1453,13 @@ class _RiskBaiduMapPickerSheetState extends State<_RiskBaiduMapPickerSheet> {
   BMFCoordinate _mapCenter = _fallbackCoordinate;
   BMFCoordinate? _selectedCoordinate;
   String _selectedAddress = '';
+  String? _selectedStreetHint;
   String _statusText = '正在定位当前位置...';
   bool _resolvingAddress = false;
   bool _locating = false;
+  bool _locationServiceMaybeDisabled = false;
+  bool _serviceDialogShown = false;
+  Timer? _locatingTimeoutTimer;
 
   @override
   void initState() {
@@ -1368,6 +1469,7 @@ class _RiskBaiduMapPickerSheetState extends State<_RiskBaiduMapPickerSheet> {
 
   @override
   void dispose() {
+    _stopLocatingTimeoutGuard();
     _mapController = null;
     if (Platform.isAndroid) {
       unawaited(_locationPlugin.stopLocation());
@@ -1378,24 +1480,32 @@ class _RiskBaiduMapPickerSheetState extends State<_RiskBaiduMapPickerSheet> {
   Future<void> _initPicker() async {
     _reverseGeoCodeSearch.onGetReverseGeoCodeSearchResult(
       callback: (result, errorCode) {
+        debugPrint('[GEO-DEBUG-RISK] callback fired: errorCode=$errorCode, result.address=${result?.address}');
         final currentPicked = _selectedCoordinate;
         final resultLocation = result.location;
         if (!mounted || currentPicked == null || resultLocation == null) {
+          debugPrint('[GEO-DEBUG-RISK] callback: early return (mounted=$mounted, hasCoord=${currentPicked != null}, hasLoc=${resultLocation != null})');
           return;
         }
         if (!_sameCoordinate(currentPicked, resultLocation)) {
+          debugPrint('[GEO-DEBUG-RISK] callback: coordinate mismatch');
           return;
         }
 
-        final address = result.address?.trim();
+        final resolvedAddress = result.address?.trim();
+        final streetHint = _extractStreetHint(result.addressDetail, resolvedAddress);
         setState(() {
           _resolvingAddress = false;
-          _selectedAddress =
-              (errorCode == BMFSearchErrorCode.NO_ERROR &&
-                  address != null &&
-                  address.isNotEmpty)
-              ? address
-              : _coordinateText(currentPicked);
+          _selectedStreetHint = streetHint;
+          final keepPickedName = _selectedAddress.trim().isNotEmpty;
+          if (!keepPickedName) {
+            _selectedAddress =
+                (errorCode == BMFSearchErrorCode.NO_ERROR &&
+                    resolvedAddress != null &&
+                    resolvedAddress.isNotEmpty)
+                ? resolvedAddress
+                : _coordinateText(currentPicked);
+          }
           _statusText = '已选中位置';
         });
       },
@@ -1412,13 +1522,12 @@ class _RiskBaiduMapPickerSheetState extends State<_RiskBaiduMapPickerSheet> {
       );
     }
 
-    final hasPermission = await _ensureLocationPermission();
-    if (!hasPermission) {
-      setState(() {
-        _statusText = '未授予定位权限，请开启定位权限后重试';
-      });
+    final locationReady = await _ensureLocationReady();
+    if (!locationReady) {
       return;
     }
+    _serviceDialogShown = false;
+    _stopLocatingTimeoutGuard();
 
     setState(() {
       _locating = true;
@@ -1451,24 +1560,117 @@ class _RiskBaiduMapPickerSheetState extends State<_RiskBaiduMapPickerSheet> {
       iosOptions.getMap(),
     );
 
-    if (Platform.isIOS) {
-      await _locationPlugin.singleLocation({
+    final started = Platform.isIOS
+        ? await _locationPlugin.singleLocation({
         'isReGeocode': true,
         'isNetworkState': true,
-      });
-    } else {
-      await _locationPlugin.startLocation();
+      })
+        : await _locationPlugin.startLocation();
+    if (!started) {
+      if (mounted) {
+        setState(() {
+          _locating = false;
+          _statusText = '定位启动失败，请检查定位服务';
+        });
+      }
+      if (_locationServiceMaybeDisabled) {
+        await _maybeShowLocationServiceDialog();
+      }
+      return;
     }
+    _startLocatingTimeoutGuard();
   }
 
-  Future<bool> _ensureLocationPermission() async {
+  Future<bool> _ensureLocationReady() async {
     var status = await Permission.location.status;
-    if (status.isGranted) {
-      return true;
+    if (!(status.isGranted || status.isLimited)) {
+      status = await Permission.location.request();
+    }
+    if (!(status.isGranted || status.isLimited)) {
+      await _showLocationPermissionDialog(status);
+      if (mounted) {
+        setState(() {
+          _statusText = '未授予定位权限，请开启定位权限后重试';
+        });
+      }
+      return false;
     }
 
-    status = await Permission.location.request();
-    return status.isGranted;
+    final serviceStatus = await Permission.location.serviceStatus;
+    _locationServiceMaybeDisabled =
+        serviceStatus != ServiceStatus.enabled &&
+        serviceStatus != ServiceStatus.notApplicable;
+
+    return true;
+  }
+
+  Future<void> _maybeShowLocationServiceDialog() async {
+    if (_serviceDialogShown) {
+      return;
+    }
+    _serviceDialogShown = true;
+    await _showLocationServiceDialog();
+  }
+
+  Future<void> _showLocationPermissionDialog(PermissionStatus status) async {
+    if (!mounted) {
+      return;
+    }
+    final permanentlyDenied = status.isPermanentlyDenied || status.isRestricted;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('需要定位权限'),
+          content: Text(
+            permanentlyDenied
+                ? '定位权限已被禁止，请前往设置开启权限后再试。'
+                : '请先允许定位权限，用于自动定位当前位置。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('取消'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.of(dialogContext).pop();
+                await openAppSettings();
+              },
+              child: const Text('去设置'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _showLocationServiceDialog() async {
+    if (!mounted) {
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('请开启定位服务'),
+          content: const Text('系统定位服务未开启，开启后可自动定位当前位置。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('取消'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.of(dialogContext).pop();
+                await openAppSettings();
+              },
+              child: const Text('去设置'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   void _onLocationUpdated(BaiduLocation result) {
@@ -1477,6 +1679,7 @@ class _RiskBaiduMapPickerSheetState extends State<_RiskBaiduMapPickerSheet> {
     if (!mounted || latitude == null || longitude == null) {
       return;
     }
+    _stopLocatingTimeoutGuard();
 
     final coordinate = BMFCoordinate(latitude, longitude);
     final address = result.address?.trim();
@@ -1489,6 +1692,27 @@ class _RiskBaiduMapPickerSheetState extends State<_RiskBaiduMapPickerSheet> {
 
     _onCoordinatePicked(coordinate, addressHint: address);
     unawaited(_centerMapTo(coordinate, animate: false));
+  }
+
+  void _startLocatingTimeoutGuard() {
+    _stopLocatingTimeoutGuard();
+    _locatingTimeoutTimer = Timer(const Duration(seconds: 8), () async {
+      if (!mounted || !_locating) {
+        return;
+      }
+      setState(() {
+        _locating = false;
+        _statusText = '定位超时，请手动选择位置';
+      });
+      if (_locationServiceMaybeDisabled) {
+        await _maybeShowLocationServiceDialog();
+      }
+    });
+  }
+
+  void _stopLocatingTimeoutGuard() {
+    _locatingTimeoutTimer?.cancel();
+    _locatingTimeoutTimer = null;
   }
 
   void _onMapCreated(BMFMapController controller) {
@@ -1535,22 +1759,27 @@ class _RiskBaiduMapPickerSheetState extends State<_RiskBaiduMapPickerSheet> {
 
   void _onCoordinatePicked(BMFCoordinate coordinate, {String? addressHint}) {
     final trimmedHint = addressHint?.trim() ?? '';
+    final streetHint = _extractStreetHintFromAddress(trimmedHint);
+    final needReverse = streetHint == null;
     setState(() {
       _selectedCoordinate = coordinate;
+      _selectedStreetHint = streetHint;
       _selectedAddress = trimmedHint;
-      _statusText = trimmedHint.isNotEmpty ? '已选中位置' : '正在解析地址...';
-      _resolvingAddress = trimmedHint.isEmpty;
+      _statusText =
+          needReverse ? '正在解析地址...' : (trimmedHint.isNotEmpty ? '已选中位置' : '地址已选中');
+      _resolvingAddress = needReverse;
     });
 
-    unawaited(_centerMapTo(coordinate, animate: true));
-
-    if (trimmedHint.isNotEmpty) {
-      return;
+    if (needReverse) {
+      unawaited(_reverseGeocode(coordinate, fallbackAddress: trimmedHint));
     }
-    unawaited(_reverseGeocode(coordinate));
   }
 
-  Future<void> _reverseGeocode(BMFCoordinate coordinate) async {
+  Future<void> _reverseGeocode(
+    BMFCoordinate coordinate, {
+    String? fallbackAddress,
+  }) async {
+    debugPrint('[GEO-DEBUG-RISK] reverseGeoCodeSearch called, coord=(${coordinate.latitude.toStringAsFixed(4)}, ${coordinate.longitude.toStringAsFixed(4)})');
     final ok = await _reverseGeoCodeSearch.reverseGeoCodeSearch(
       BMFReverseGeoCodeSearchOption(
         location: coordinate,
@@ -1559,11 +1788,16 @@ class _RiskBaiduMapPickerSheetState extends State<_RiskBaiduMapPickerSheet> {
         pageNum: 0,
       ),
     );
+    debugPrint('[GEO-DEBUG-RISK] reverseGeoCodeSearch returned: ok=$ok');
 
     if (!ok && mounted) {
+      debugPrint('[GEO-DEBUG-RISK] failed immediately, falling back');
+      final fallback = fallbackAddress?.trim() ?? '';
       setState(() {
         _resolvingAddress = false;
-        _selectedAddress = _coordinateText(coordinate);
+        _selectedAddress = fallback.isNotEmpty
+            ? fallback
+            : _coordinateText(coordinate);
         _statusText = '地址解析失败，请手动确认位置';
       });
     }
@@ -1578,10 +1812,47 @@ class _RiskBaiduMapPickerSheetState extends State<_RiskBaiduMapPickerSheet> {
     return '${coordinate.latitude.toStringAsFixed(6)}, ${coordinate.longitude.toStringAsFixed(6)}';
   }
 
+  String? _extractStreetHint(dynamic addressDetail, String? fullAddress) {
+    if (addressDetail == null) {
+      return _extractStreetHintFromAddress(fullAddress ?? '');
+    }
+    String? normalize(dynamic value) {
+      if (value == null) {
+        return null;
+      }
+      final text = value.toString().trim();
+      if (text.isEmpty || text == 'null') {
+        return null;
+      }
+      return text;
+    }
+
+    final town = normalize(addressDetail.town);
+    if (town != null) {
+      return town;
+    }
+    return normalize(addressDetail.streetName) ??
+        _extractStreetHintFromAddress(fullAddress ?? '');
+  }
+
+  String? _extractStreetHintFromAddress(String address) {
+    final text = address.trim();
+    if (text.isEmpty) {
+      return null;
+    }
+    final match = RegExp(
+      r'([\u4E00-\u9FFFA-Za-z0-9]{2,20}(?:街道|镇|乡))',
+    ).firstMatch(text);
+    if (match == null) {
+      return null;
+    }
+    return match.group(1)?.trim();
+  }
+
   @override
   Widget build(BuildContext context) {
     final selectedAddress = _selectedAddress.trim();
-    final canConfirm = _selectedCoordinate != null;
+    final canConfirm = _selectedCoordinate != null && !_resolvingAddress;
     final media = MediaQuery.of(context);
     final actionBottomPadding = media.padding.bottom > 0
         ? media.padding.bottom + 8
@@ -1811,6 +2082,7 @@ class _RiskBaiduMapPickerSheetState extends State<_RiskBaiduMapPickerSheet> {
                                 _RiskPickedLocationResult(
                                   coordinate: coordinate,
                                   address: address,
+                                  streetHint: _selectedStreetHint,
                                 ),
                               );
                             }

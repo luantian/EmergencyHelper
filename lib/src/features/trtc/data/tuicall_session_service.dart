@@ -1,16 +1,28 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:emergency_helper/src/core/di/app_dependencies.dart';
 import 'package:emergency_helper/src/core/errors/app_exception.dart';
 import 'package:emergency_helper/src/features/push/data/push_service.dart';
 import 'package:emergency_helper/src/features/trtc/data/trtc_service.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
+import 'package:rtc_room_engine/rtc_room_engine.dart' as rtc;
 import 'package:tencent_calls_uikit/tencent_calls_uikit.dart';
 
 class TUICallSessionService {
   TUICallSessionService._();
 
   static final TUICallSessionService instance = TUICallSessionService._();
-  static const int _defaultRoomId = 100001;
+
+  /// Generate a unique room ID based on timestamp + random suffix.
+  /// Room ID format: (timestamp_ms % 10B) * 100 + [0-99]
+  static int generateRoomId() {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final random = Random().nextInt(100);
+    return (now % 10000000000) * 100 + random;
+  }
+
   static const Duration _ensureLoginTimeout = Duration(seconds: 20);
   static const List<Duration> _warmupRetryBackoffs = <Duration>[
     Duration.zero,
@@ -20,7 +32,6 @@ class TUICallSessionService {
 
   final TrtcService _trtcService = const TrtcService();
   Future<TUICallSessionState>? _ongoingEnsureTask;
-  Future<void>? _ongoingLogoutTask;
   Future<void>? _ongoingWarmupTask;
   Future<void> _sessionTransitionQueue = Future<void>.value();
   String? _activeUserId;
@@ -30,14 +41,203 @@ class TUICallSessionService {
   int _sessionEpoch = 0;
   static const Duration _activeSigReuseWindow = Duration(minutes: 30);
 
+  /// Global call observer for multi-device sync notifications.
+  rtc.TUICallObserver? _globalCallObserver;
+  final List<void Function(String message)> _callNotificationListeners = [];
+
+  /// Track active incoming call IDs on this device.
+  final Set<String> _incomingCallIds = {};
+
+  /// Whether the local user answered the current incoming call.
+  bool _localUserAnsweredIncoming = false;
+
+  /// Register listener to receive multi-device call sync events.
+  void addCallNotificationListener(void Function(String) listener) {
+    _callNotificationListeners.add(listener);
+  }
+
+  void removeCallNotificationListener(void Function(String) listener) {
+    _callNotificationListeners.remove(listener);
+  }
+
+  void _notifyCall(String message) {
+    for (final listener in List.of(_callNotificationListeners)) {
+      listener(message);
+    }
+  }
+
+  /// Mark a call as incoming on this device. Call when incoming call UI shows.
+  void markIncomingCall(String callId) {
+    _incomingCallIds.add(callId);
+    debugPrint('[TRTC-Session] markIncomingCall callId=$callId, 当前集合=$_incomingCallIds');
+  }
+
+  /// Mark that the local user answered the current incoming call.
+  void markLocalUserAnswered() {
+    _localUserAnsweredIncoming = true;
+    debugPrint('[TRTC-Session] markLocalUserAnswered');
+  }
+
+  /// Check if the call ended due to another device handling it (FFI bug workaround).
+  /// Returns true if this was an incoming call on this device that was NOT answered locally.
+  bool _isOtherDeviceHandled(String callId) {
+    final wasIncoming = _incomingCallIds.remove(callId);
+    final answeredLocally = _localUserAnsweredIncoming;
+    _localUserAnsweredIncoming = false;
+    debugPrint('[TRTC-Workaround] callId=$callId wasIncoming=$wasIncoming answeredLocally=$answeredLocally');
+    return wasIncoming && !answeredLocally;
+  }
+
+  /// Stop everything and notify — await native cleanup before showing toast.
+  Future<void> _stopAndNotify(String message) async {
+    await _stopIncomingCall();
+    _notifyCall(message);
+  }
+
+  /// Stop incoming call ringtone, vibration, and close incoming UI.
+  Future<void> _stopIncomingCall() async {
+    // Native-side: stop vibration, ringtone, and close incoming call UI.
+    // This uses reflection to call TUICallEngine.hangup() and
+    // CallingVibrator.stopVibration() directly on the Android side.
+    try {
+      debugPrint('[TRTC-Session] stopping incoming call via native workaround');
+      const channel = MethodChannel('com.tianyanzhiyun/trtc_workaround');
+      await channel.invokeMethod('stopIncomingCallAndFinish', {});
+    } catch (error, stackTrace) {
+      debugPrint('[TRTC-Session] stopIncomingCallAndFinish failed: $error');
+      debugPrint('[TRTC-Session] stack: $stackTrace');
+    }
+  }
+
+  /// Initialize global call observer. Should be called once after login.
+  void initCallObserver() {
+    if (_globalCallObserver != null) {
+      disposeCallObserver();
+    }
+    _globalCallObserver = rtc.TUICallObserver(
+      onCallReceived: (callId, callerId, calleeIdList, mediaType, info) {
+        debugPrint(
+          '[TRTC-GlobalObserver] 📞 onCallReceived callId=$callId '
+          'callerId=$callerId mediaType=$mediaType',
+        );
+        markIncomingCall(callId);
+      },
+      onCallNotConnected: (callId, mediaType, reason, userId, info) {
+        debugPrint(
+          '[TRTC-GlobalObserver] 🔔 onCallNotConnected callId=$callId '
+          'reason=$reason(${reason.index}) userId=$userId',
+        );
+        switch (reason) {
+          case rtc.CallEndReason.otherDeviceAccepted:
+            _incomingCallIds.remove(callId);
+            _localUserAnsweredIncoming = false;
+            _notifyCall('通话已在其他设备接听');
+            break;
+          case rtc.CallEndReason.hangup:
+            // 可能是正常挂断，也可能是 FFI bug 映射
+            final wasIncoming = _incomingCallIds.remove(callId);
+            if (wasIncoming && !_localUserAnsweredIncoming) {
+              debugPrint('[TRTC-Workaround] hangup on incoming call → other device handled');
+              _localUserAnsweredIncoming = false;
+              unawaited(_stopAndNotify('通话已在其他设备接听'));
+            } else {
+              _localUserAnsweredIncoming = false;
+            }
+            break;
+          case rtc.CallEndReason.reject:
+          case rtc.CallEndReason.unknown:
+            // ⚠️ rtc_room_engine 4.0.1 FFI bug:
+            // otherDeviceAccepted(7) 被映射为 unknown(0) 或 reject(2)
+            if (_isOtherDeviceHandled(callId)) {
+              // 手动挂断来电以停止 SDK 的响铃 UI（FFI bug 导致 SDK 无法自动关闭）
+              unawaited(_stopAndNotify('通话已在其他设备接听'));
+            } else {
+              if (reason == rtc.CallEndReason.unknown) {
+                debugPrint('[TRTC] 真实 unknown，忽略');
+              } else {
+                _notifyCall('通话被拒绝');
+              }
+            }
+            break;
+          case rtc.CallEndReason.otherDeviceReject:
+            _incomingCallIds.remove(callId);
+            _localUserAnsweredIncoming = false;
+            _notifyCall('通话已在其他设备拒绝');
+            break;
+          case rtc.CallEndReason.canceled:
+            _incomingCallIds.remove(callId);
+            _localUserAnsweredIncoming = false;
+            _notifyCall('对方已取消通话');
+            break;
+          case rtc.CallEndReason.noResponse:
+            _incomingCallIds.remove(callId);
+            _localUserAnsweredIncoming = false;
+            _notifyCall('对方无应答');
+            break;
+          case rtc.CallEndReason.lineBusy:
+            _incomingCallIds.remove(callId);
+            _localUserAnsweredIncoming = false;
+            _notifyCall('对方正忙');
+            break;
+          default:
+            _incomingCallIds.remove(callId);
+            _localUserAnsweredIncoming = false;
+            debugPrint('[TRTC-GlobalObserver] 未处理的 reason: ${reason.index}');
+        }
+      },
+      onCallBegin: (callId, mediaType, info) {
+        _incomingCallIds.remove(callId);
+        _localUserAnsweredIncoming = false;
+        debugPrint(
+          '[TRTC-GlobalObserver] 🟢 onCallBegin callId=$callId '
+          'mediaType=$mediaType',
+        );
+      },
+      onCallEnd: (callId, mediaType, reason, userId, totalTime, info) {
+        debugPrint(
+          '[TRTC-GlobalObserver] 🔴 onCallEnd callId=$callId '
+          'reason=$reason(${reason.index}) userId=$userId totalTime=${totalTime}s',
+        );
+        switch (reason) {
+          case rtc.CallEndReason.otherDeviceAccepted:
+            _incomingCallIds.remove(callId);
+            _localUserAnsweredIncoming = false;
+            _notifyCall('通话已在其他设备接听');
+            break;
+          case rtc.CallEndReason.lineBusy:
+          case rtc.CallEndReason.otherDeviceReject:
+            _incomingCallIds.remove(callId);
+            _localUserAnsweredIncoming = false;
+            _notifyCall('对方正忙');
+            break;
+          default:
+            _incomingCallIds.remove(callId);
+            _localUserAnsweredIncoming = false;
+            break;
+        }
+      },
+    );
+    rtc.TUICallEngine.instance.addObserver(_globalCallObserver!);
+    debugPrint('[TRTC-GlobalObserver] ✅ registered after login');
+  }
+
+  void disposeCallObserver() {
+    final observer = _globalCallObserver;
+    if (observer != null) {
+      rtc.TUICallEngine.instance.removeObserver(observer);
+      _globalCallObserver = null;
+      debugPrint('[TRTC-GlobalObserver] disposed');
+    }
+  }
+
   /// The sdkAppId of the currently active IM session, or null if not logged in.
   int? get activeSdkAppId => _activeSdkAppId;
 
   void clearLocalSessionState() {
     _sessionEpoch++;
     _ongoingEnsureTask = null;
-    _ongoingLogoutTask = null;
     _ongoingWarmupTask = null;
+    _sessionTransitionQueue = Future<void>.value();
     _activeUserId = null;
     _activeSdkAppId = null;
     _activeUserSig = null;
@@ -46,7 +246,7 @@ class TUICallSessionService {
 
   Future<void> warmupSessionAndPushInBackground({
     required AppDependencies dependencies,
-    int roomIdHint = _defaultRoomId,
+    int roomIdHint = 0,
     String? userIdHint,
   }) async {
     final running = _ongoingWarmupTask;
@@ -136,7 +336,7 @@ class TUICallSessionService {
 
   Future<TUICallSessionState> ensureLoggedIn({
     required AppDependencies dependencies,
-    int roomIdHint = _defaultRoomId,
+    int roomIdHint = 0,
     bool forceRefreshSig = false,
     String? userIdHint,
   }) async {
@@ -237,7 +437,7 @@ class TUICallSessionService {
           await dependencies.authService.getCachedPermissionInfo(),
         ) ??
         '';
-    final roomId = roomIdHint > 0 ? roomIdHint : _defaultRoomId;
+    final roomId = roomIdHint > 0 ? roomIdHint : generateRoomId();
 
     // Avoid re-entering the IM login path for the same in-memory user session.
     // Repeated logout->login for the same account may trigger SDK internal
@@ -312,13 +512,10 @@ class TUICallSessionService {
         return const TUICallSessionState.failure('SESSION_CANCELLED');
       }
       if (_activeUserId != null && _activeUserId != currentUserId) {
-        try {
-          await TUICallKit.instance.logout().timeout(
-            const Duration(seconds: 4),
-          );
-        } catch (_) {
-          // Ignore logout failures when SDK state is already cleared.
-        }
+        // Avoid native logout during account switch.
+        // On some devices this can contend with login/warmup and trigger UI
+        // stalls (ANR). We reset in-memory session markers and proceed to
+        // login directly.
         _activeUserId = null;
         _activeSdkAppId = null;
         _activeUserSig = null;
@@ -353,6 +550,17 @@ class TUICallSessionService {
       _activeUserSig = userSigInfo.userSig;
       _activeUserSigFetchedAt = DateTime.now();
 
+      // ✅ Register observer AFTER login success — native layer must be ready
+      try {
+        initCallObserver();
+      } catch (error, stackTrace) {
+        dependencies.logger.error(
+          'initCallObserver threw',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+
       final selfInfoReady = await _setSelfInfoWithRetry(
         dependencies: dependencies,
         nickname: nickname,
@@ -386,6 +594,7 @@ class TUICallSessionService {
         _notifyPushRegistrationInBackground(
           dependencies: dependencies,
           sdkAppId: userSigInfo.sdkAppId,
+          userId: currentUserId,
           epoch: epoch,
         ),
       );
@@ -410,34 +619,12 @@ class TUICallSessionService {
   }
 
   Future<void> logoutSilently({AppDependencies? dependencies}) async {
-    final running = _ongoingLogoutTask;
-    if (running != null) {
-      await running;
-      return;
-    }
-    final task = _enqueueSessionTransition<void>(() {
-      return _logoutSilentlyInternal(dependencies: dependencies);
-    });
-    _ongoingLogoutTask = task;
-    try {
-      await task;
-    } finally {
-      if (identical(_ongoingLogoutTask, task)) {
-        _ongoingLogoutTask = null;
-      }
-    }
-  }
-
-  Future<void> _logoutSilentlyInternal({AppDependencies? dependencies}) async {
-    _sessionEpoch++;
-    _ongoingEnsureTask = null;
-    _ongoingWarmupTask = null;
-    try {
-      await TUICallKit.instance.logout().timeout(const Duration(seconds: 4));
-    } catch (_) {
-      // Ignore logout failures when SDK state is already cleared.
-    }
+    // IMPORTANT:
+    // Do not call TUICallKit.logout() during app logout/login transitions.
+    // Native IM SDK logout can contend with concurrent login/warmup and cause
+    // UI-thread stalls (ANR) on some devices.
     clearLocalSessionState();
+    await Future<void>.value();
   }
 
   Future<T> _enqueueSessionTransition<T>(Future<T> Function() action) {
@@ -467,6 +654,7 @@ class TUICallSessionService {
   Future<void> _notifyPushRegistrationInBackground({
     required AppDependencies dependencies,
     required int sdkAppId,
+    required String userId,
     required int epoch,
   }) async {
     if (sdkAppId <= 0) {
@@ -477,7 +665,7 @@ class TUICallSessionService {
     }
     try {
       await dependencies.pushService
-          .notifyIMLoggedIn(sdkAppId)
+          .notifyIMLoggedIn(sdkAppId, userId: userId)
           .timeout(const Duration(seconds: 12));
       if (_isEpochStale(epoch)) {
         return;

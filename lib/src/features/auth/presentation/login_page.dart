@@ -31,7 +31,7 @@ class _LoginPageState extends State<LoginPage> {
   final _passwordController = TextEditingController();
 
   bool _agree = true;
-  bool _rememberAccount = false;
+  bool _rememberPassword = false;
   bool _obscurePassword = true;
   bool _submitting = false;
 
@@ -162,18 +162,31 @@ class _LoginPageState extends State<LoginPage> {
                         children: <Widget>[
                           Checkbox(
                             key: const Key('login-remember-checkbox'),
-                            value: _rememberAccount,
+                            value: _rememberPassword,
                             onChanged: _submitting
                                 ? null
                                 : (value) {
                                     setState(() {
-                                      _rememberAccount = value ?? false;
+                                      _rememberPassword = value ?? false;
                                     });
                                   },
                           ),
-                          const Text(
-                            '\u8bb0\u4f4f\u8d26\u53f7',
-                            style: TextStyle(color: Color(0xFF667085)),
+                          GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: _submitting
+                                ? null
+                                : () {
+                                    setState(() {
+                                      _rememberPassword = !_rememberPassword;
+                                    });
+                                  },
+                            child: const Padding(
+                              padding: EdgeInsets.symmetric(vertical: 4),
+                              child: Text(
+                                '\u8bb0\u4f4f\u5bc6\u7801',
+                                style: TextStyle(color: Color(0xFF667085)),
+                              ),
+                            ),
                           ),
                         ],
                       ),
@@ -251,8 +264,9 @@ class _LoginPageState extends State<LoginPage> {
       final dependencies = context.read<AppDependencies>();
       if (_isFlutterTestEnv()) {
         await dependencies.authLocalStore.saveRememberedCredential(
-          rememberAccount: _rememberAccount,
+          rememberPassword: _rememberPassword,
           username: username,
+          password: password,
         );
         EventCenter.instance.resetSessionCache(notify: false);
         RiskCenter.instance.resetSessionData(notify: false);
@@ -270,8 +284,9 @@ class _LoginPageState extends State<LoginPage> {
         password: password,
       );
       await dependencies.authLocalStore.saveRememberedCredential(
-        rememberAccount: _rememberAccount,
+        rememberPassword: _rememberPassword,
         username: username,
+        password: password,
       );
       EventCenter.instance.resetSessionCache(notify: false);
       RiskCenter.instance.resetSessionData(notify: false);
@@ -288,11 +303,11 @@ class _LoginPageState extends State<LoginPage> {
           permissionInfo: loginResult.permissionInfo,
         ),
       );
-    } on AppException catch (error) {
-      _showMessage(error.message);
+    } on AppException {
+      _showMessage('用户名或密码错误');
     } catch (_) {
       _showMessage(
-        '\u767b\u5f55\u5931\u8d25\uff0c\u8bf7\u7a0d\u540e\u91cd\u8bd5',
+        '\u7528\u6237\u540d\u6216\u5bc6\u7801\u9519\u8bef',
       );
     } finally {
       if (mounted) {
@@ -336,18 +351,14 @@ class _LoginPageState extends State<LoginPage> {
       return;
     }
 
-    if (remembered.rememberAccount && remembered.username.trim().isNotEmpty) {
-      setState(() {
-        _rememberAccount = true;
-        _accountController.text = remembered.username;
-        _passwordController.clear();
-      });
-      return;
-    }
-
     setState(() {
-      _rememberAccount = remembered.rememberAccount;
-      _passwordController.clear();
+      if (remembered.username.trim().isNotEmpty) {
+        _accountController.text = remembered.username;
+      }
+      _rememberPassword = remembered.rememberPassword;
+      _passwordController.text = remembered.rememberPassword
+          ? remembered.password
+          : '';
     });
   }
 

@@ -8,6 +8,7 @@ import 'package:emergency_helper/src/core/network/api_client.dart';
 import 'package:emergency_helper/src/core/routing/app_router.dart';
 import 'package:emergency_helper/src/core/routing/route_paths.dart';
 import 'package:emergency_helper/src/core/theme/app_theme.dart';
+import 'package:emergency_helper/src/core/widgets/app_center_toast.dart';
 import 'package:emergency_helper/src/features/event/data/event_center.dart';
 import 'package:emergency_helper/src/features/push/data/push_service.dart';
 import 'package:emergency_helper/src/features/risk/data/risk_center.dart';
@@ -54,17 +55,28 @@ class _EmergencyHelperAppState extends State<EmergencyHelperApp> {
         .listen((event) {
           unawaited(_handleIncomingPush(event));
         });
+    TUICallSessionService.instance
+        .addCallNotificationListener(_onCallNotification);
+    // initCallObserver moved to after TUICallKit.login success
     unawaited(_initializeDependencies());
   }
 
   @override
   void dispose() {
+    TUICallSessionService.instance.disposeCallObserver();
+    TUICallSessionService.instance
+        .removeCallNotificationListener(_onCallNotification);
     _authExpiredSubscription.cancel();
     _pushOpenSubscription.cancel();
     _pushIncomingSubscription.cancel();
     _pushBannerTimer?.cancel();
     widget.dependencies.dispose();
     super.dispose();
+  }
+
+  void _onCallNotification(String message) {
+    debugPrint('[App] call notification: $message');
+    AppCenterToast.show(context, message);
   }
 
   @override
@@ -131,7 +143,7 @@ class _EmergencyHelperAppState extends State<EmergencyHelperApp> {
 
       final stillAuthorized = await widget.dependencies.authService
           .ensureValidAccessToken(validateWithServer: true)
-          .timeout(const Duration(seconds: 5), onTimeout: () => true);
+          .timeout(const Duration(seconds: 5), onTimeout: () => false);
       if (stillAuthorized) {
         widget.dependencies.logger.info(
           'stale auth expired ignored: path=${event.path}',
@@ -149,6 +161,8 @@ class _EmergencyHelperAppState extends State<EmergencyHelperApp> {
       widget.dependencies.apiClient.cancelAllPendingRequests(
         reason: 'AUTH_EXPIRED_FORCE_LOGOUT',
       );
+      TUICallSessionService.instance.disposeCallObserver();
+      TUICallSessionService.instance.clearLocalSessionState();
       EventCenter.instance.resetSessionCache(notify: false);
       RiskCenter.instance.resetSessionData(notify: false);
       await widget.dependencies.authLocalStore.clear();
@@ -172,6 +186,10 @@ class _EmergencyHelperAppState extends State<EmergencyHelperApp> {
   }
 
   Future<void> _runAuthExpiredCleanupInBackground() async {
+    await _runWithTimeout(
+      widget.dependencies.pushService.unregisterPush(),
+      timeout: const Duration(seconds: 3),
+    );
     await _runWithTimeout(
       widget.dependencies.pushService.unbindAlias(),
       timeout: const Duration(seconds: 2),

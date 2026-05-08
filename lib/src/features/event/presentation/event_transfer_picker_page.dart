@@ -14,6 +14,7 @@ class EventTransferSelection {
     this.userTitles = const <String>[],
     this.userDepartments = const <String>[],
     this.userPhones = const <String>[],
+    this.content = '',
   });
 
   final List<int> userIds;
@@ -21,6 +22,7 @@ class EventTransferSelection {
   final List<String> userTitles;
   final List<String> userDepartments;
   final List<String> userPhones;
+  final String content;
 }
 
 class EventTransferPickerPage extends StatefulWidget {
@@ -34,6 +36,7 @@ class EventTransferPickerPage extends StatefulWidget {
     this.permissionDeniedHint =
         '\u5F53\u524D\u8D26\u53F7\u65E0\u4E8B\u4EF6\u8F6C\u6D3E\u6743\u9650',
     this.initialSelectedUserIds = const <int>[],
+    this.showContentField = true,
     super.key,
   });
 
@@ -44,6 +47,7 @@ class EventTransferPickerPage extends StatefulWidget {
   final String emptySelectionHint;
   final String permissionDeniedHint;
   final List<int> initialSelectedUserIds;
+  final bool showContentField;
 
   @override
   State<EventTransferPickerPage> createState() =>
@@ -52,6 +56,7 @@ class EventTransferPickerPage extends StatefulWidget {
 
 class _EventTransferPickerPageState extends State<EventTransferPickerPage> {
   late final TextEditingController _searchController;
+  late final TextEditingController _contentController;
   late final Set<int> _initialSelectedUserIds;
   List<ContactGroup> _contactTree = contactTreeData();
   List<ContactPerson> _allContacts = allContactPersons();
@@ -64,6 +69,7 @@ class _EventTransferPickerPageState extends State<EventTransferPickerPage> {
   void initState() {
     super.initState();
     _searchController = TextEditingController();
+    _contentController = TextEditingController();
     _initialSelectedUserIds = widget.initialSelectedUserIds
         .where((id) => id > 0)
         .toSet();
@@ -73,6 +79,7 @@ class _EventTransferPickerPageState extends State<EventTransferPickerPage> {
   @override
   void dispose() {
     _searchController.dispose();
+    _contentController.dispose();
     super.dispose();
   }
 
@@ -117,8 +124,11 @@ class _EventTransferPickerPageState extends State<EventTransferPickerPage> {
       body: AppLoadingOverlay(
         loading: _loading,
         message: '\u6B63\u5728\u52A0\u8F7D\u901A\u8BAF\u5F55...',
-        child: Column(
-          children: <Widget>[
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: () => FocusScope.of(context).unfocus(),
+          child: Column(
+            children: <Widget>[
             if (_loadError != null)
               Padding(
                 padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
@@ -268,31 +278,109 @@ class _EventTransferPickerPageState extends State<EventTransferPickerPage> {
                       },
                     ),
             ),
-            Container(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
-              color: const Color(0xFFF2F3F5),
-              child: SizedBox(
-                width: double.infinity,
-                height: 42,
-                child: ElevatedButton(
-                  onPressed: _onConfirm,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF2088E8),
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
+            if (widget.showContentField)
+              Container(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
+                color: const Color(0xFFF2F3F5),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    const Text(
+                      '转派说明',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF2E3440),
+                      ),
                     ),
-                  ),
-                  child: Text(
-                    widget.confirmButtonText,
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: _contentController,
+                      maxLines: 3,
+                      maxLength: 200,
+                      textAlignVertical: TextAlignVertical.top,
+                      decoration: InputDecoration(
+                        hintText: '请输入转派说明',
+                        filled: true,
+                        fillColor: Colors.white,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: const BorderSide(
+                            color: Color(0xFFD8DFE9),
+                          ),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: const BorderSide(
+                            color: Color(0xFFD8DFE9),
+                          ),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10),
+                          borderSide: const BorderSide(
+                            color: Color(0xFF2088E8),
+                          ),
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 42,
+                      child: ElevatedButton(
+                        onPressed: _loading ? null : _onConfirm,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF2088E8),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        child: Text(
+                          widget.confirmButtonText,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            if (!widget.showContentField)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 42,
+                  child: ElevatedButton(
+                    onPressed: _loading ? null : _onConfirm,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF2088E8),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                    child: Text(
+                      widget.confirmButtonText,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
           ],
         ),
       ),
+    ),
     );
   }
 
@@ -314,6 +402,9 @@ class _EventTransferPickerPageState extends State<EventTransferPickerPage> {
       setState(() {
         _contactTree = remoteTree.isEmpty ? contactTreeData() : remoteTree;
         _allContacts = allContactPersons(_contactTree);
+        // Reconcile existing selections: keep only IDs that exist in the new data.
+        final validIds = _allContacts.map((p) => p.id).toSet();
+        _selectedIds.retainWhere((id) => validIds.contains(id));
         if (_selectedIds.isEmpty && _initialSelectedUserIds.isNotEmpty) {
           _selectedIds.addAll(_buildInitialSelectedContactIds(_allContacts));
         }
@@ -576,6 +667,14 @@ class _EventTransferPickerPageState extends State<EventTransferPickerPage> {
       return;
     }
 
+    final content = widget.showContentField
+        ? _contentController.text.trim()
+        : '';
+    if (widget.showContentField && content.isEmpty) {
+      AppCenterToast.show(context, '请输入转派说明');
+      return;
+    }
+
     final selectedPeople = _allContacts
         .where((person) => _selectedIds.contains(person.id))
         .toList();
@@ -605,6 +704,7 @@ class _EventTransferPickerPageState extends State<EventTransferPickerPage> {
         userTitles: userTitles,
         userDepartments: userDepartments,
         userPhones: userPhones,
+        content: content,
       ),
     );
   }

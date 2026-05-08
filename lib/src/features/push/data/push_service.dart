@@ -2,8 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:emergency_helper/src/core/constants/app_constants.dart';
 import 'package:emergency_helper/src/core/logging/app_logger.dart';
 import 'package:emergency_helper/src/core/routing/route_paths.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/services.dart';
 import 'package:tencent_cloud_chat_push/common/tim_push_listener.dart';
 import 'package:tencent_cloud_chat_push/common/tim_push_message.dart';
@@ -15,12 +17,15 @@ class PushService {
 
   final AppLogger _logger;
   final TencentCloudChatPush _chatPush = TencentCloudChatPush();
+  final FlutterLocalNotificationsPlugin _localNotifications =
+      FlutterLocalNotificationsPlugin();
   final StreamController<PushOpenPayload> _openPayloadController =
       StreamController<PushOpenPayload>.broadcast();
   final StreamController<PushIncomingEvent> _incomingEventController =
       StreamController<PushIncomingEvent>.broadcast();
   TIMPushListener? _pushListener;
   bool _pushListenerRegistered = false;
+  bool _localNotificationInitialized = false;
 
   bool _initialized = false;
   bool _available = false;
@@ -31,6 +36,14 @@ class PushService {
   String? _lastAliasBindCode;
   String? _lastAliasBindMessage;
   DateTime? _lastAliasBindTime;
+  String? _lastRegisterPushCode;
+  String? _lastRegisterPushMessage;
+  DateTime? _lastRegisterPushTime;
+  int? _lastRegisterPushSdkAppId;
+  String? _lastSetRegistrationIdCode;
+  String? _lastSetRegistrationIdMessage;
+  DateTime? _lastSetRegistrationIdTime;
+  String? _lastSetRegistrationIdValue;
   PushOpenPayload? _pendingOpenPayload;
   Future<void>? _ongoingNotifyImLoginTask;
   int? _ongoingNotifyImLoginSdkAppId;
@@ -40,6 +53,13 @@ class PushService {
   static const Duration _notifyImLoginDedupWindow = Duration(seconds: 8);
   static const Duration _registerPushTimeout = Duration(seconds: 10);
   static const Duration _getRegistrationIdTimeout = Duration(seconds: 5);
+  static const Duration _unregisterPushTimeout = Duration(seconds: 5);
+  static const String _localNotificationChannelId =
+      'emergency_helper_push_channel';
+  static const String _localNotificationChannelName =
+      '\u6d88\u606f\u901a\u77e5';
+  static const String _localNotificationChannelDescription =
+      '\u7528\u4e8e\u5c55\u793a\u63a8\u9001\u6d88\u606f\u63d0\u9192';
   static const List<Duration> _aliasBindRetryBackoffs = <Duration>[
     Duration.zero,
     Duration(seconds: 2),
@@ -58,13 +78,21 @@ class PushService {
   String? get lastAliasBindCode => _lastAliasBindCode;
   String? get lastAliasBindMessage => _lastAliasBindMessage;
   DateTime? get lastAliasBindTime => _lastAliasBindTime;
+  String? get lastRegisterPushCode => _lastRegisterPushCode;
+  String? get lastRegisterPushMessage => _lastRegisterPushMessage;
+  DateTime? get lastRegisterPushTime => _lastRegisterPushTime;
+  int? get lastRegisterPushSdkAppId => _lastRegisterPushSdkAppId;
+  String? get lastSetRegistrationIdCode => _lastSetRegistrationIdCode;
+  String? get lastSetRegistrationIdMessage => _lastSetRegistrationIdMessage;
+  DateTime? get lastSetRegistrationIdTime => _lastSetRegistrationIdTime;
+  String? get lastSetRegistrationIdValue => _lastSetRegistrationIdValue;
 
   bool get isAvailable => _available;
 
   Future<String?> refreshRegistrationId() async {
     // Don't override a confirmed RegistrationID. The native SDK's
     // getRegistrationID() may return a short value (e.g., IM userId)
-    // before vendor push tokens arrive — we don't want to lose the real one.
+    // before vendor push tokens arrive 鈥?we don't want to lose the real one.
     if (_registrationIdConfirmed && _registrationId != null) {
       _available = true;
       await _retryQueuedAliasIfNeeded();
@@ -94,6 +122,9 @@ class PushService {
 
   Future<void> clearBadgeAndNotifications() async {
     // App UI handles badge clearing; TIMPush handles internal notification state.
+    try {
+      await _localNotifications.cancelAll();
+    } catch (_) {}
     _logger.info('clear push badge');
   }
 
@@ -108,6 +139,14 @@ class PushService {
       lastAliasBindCode: _lastAliasBindCode,
       lastAliasBindMessage: _lastAliasBindMessage,
       lastAliasBindTime: _lastAliasBindTime,
+      lastRegisterPushCode: _lastRegisterPushCode,
+      lastRegisterPushMessage: _lastRegisterPushMessage,
+      lastRegisterPushTime: _lastRegisterPushTime,
+      lastRegisterPushSdkAppId: _lastRegisterPushSdkAppId,
+      lastSetRegistrationIdCode: _lastSetRegistrationIdCode,
+      lastSetRegistrationIdMessage: _lastSetRegistrationIdMessage,
+      lastSetRegistrationIdTime: _lastSetRegistrationIdTime,
+      lastSetRegistrationIdValue: _lastSetRegistrationIdValue,
       production: false,
       channel: 'tim-push',
       appKey: 'N/A (uses timpush-configs.json)',
@@ -126,7 +165,7 @@ class PushService {
     }
 
     try {
-      // Only register the notification click callback here — do NOT call
+      // Only register the notification click callback here 鈥?do NOT call
       // registerPush() yet, because the IM SDK isn't logged in and
       // registerPush would fail with "not logined" (errcode 800001).
       // The actual push registration (registerPush) will happen after
@@ -136,9 +175,15 @@ class PushService {
             onNotificationClicked: _onNotificationClicked,
           );
       _logger.info('push click callback registered, code=${clickResult.code}');
+      final wakeResult = await TencentCloudChatPushPlatform.instance
+          .registerOnAppWakeUpEvent(onAppWakeUpEvent: _onAppWakeUpEvent);
+      _logger.info(
+        'push app-wake callback registered, code=${wakeResult.code}',
+      );
       await _ensurePushListenerRegistered();
+      await _ensureLocalNotificationInitialized();
 
-      // Don't call getRegistrationID here — before IM login it may return
+      // Don't call getRegistrationID here 鈥?before IM login it may return
       // the IM userId instead of the real vendor push token.
       _logger.info('push initialized (awaiting IM login for registration)');
     } on MissingPluginException catch (error, stackTrace) {
@@ -160,14 +205,21 @@ class PushService {
   /// Call this after the IM SDK (TUICallKit) has successfully logged in.
   /// This registers push with the correct sdkAppId so the native TIMPush SDK
   /// can properly report the vendor channel token to the Tencent IM server.
-  Future<void> notifyIMLoggedIn(int sdkAppId) async {
+  Future<void> notifyIMLoggedIn(
+    int sdkAppId, {
+    String? userId,
+    bool force = false,
+  }) async {
     final epoch = _lifecycleEpoch;
     final running = _ongoingNotifyImLoginTask;
-    if (running != null && _ongoingNotifyImLoginSdkAppId == sdkAppId) {
+    if (!force &&
+        running != null &&
+        _ongoingNotifyImLoginSdkAppId == sdkAppId) {
       await running;
       return;
     }
-    if (_available &&
+    if (!force &&
+        _available &&
         _lastNotifyImLoginSdkAppId == sdkAppId &&
         _lastNotifyImLoginAt != null &&
         DateTime.now().difference(_lastNotifyImLoginAt!) <
@@ -177,7 +229,11 @@ class PushService {
       );
       return;
     }
-    final task = _notifyIMLoggedInInternal(sdkAppId, epoch: epoch);
+    final task = _notifyIMLoggedInInternal(
+      sdkAppId,
+      epoch: epoch,
+      force: force,
+    );
     _ongoingNotifyImLoginTask = task;
     _ongoingNotifyImLoginSdkAppId = sdkAppId;
     try {
@@ -195,6 +251,7 @@ class PushService {
   Future<void> _notifyIMLoggedInInternal(
     int sdkAppId, {
     required int epoch,
+    required bool force,
   }) async {
     _logger.debug(
       '[PUSH-DEBUG] notifyIMLoggedIn called with sdkAppId=$sdkAppId',
@@ -203,17 +260,33 @@ class PushService {
       return;
     }
     if (!_initialized) {
+      _recordRegisterPushResult(
+        code: 'NOT_INITIALIZED',
+        message: 'push not yet initialized',
+        sdkAppId: sdkAppId,
+      );
       _logger.error('notifyIMLoggedIn: push not yet initialized');
       return;
     }
     if (sdkAppId <= 0) {
+      _recordRegisterPushResult(
+        code: 'INVALID_SDKAPPID',
+        message: 'invalid sdkAppId: $sdkAppId',
+        sdkAppId: sdkAppId,
+      );
       _logger.error('notifyIMLoggedIn: invalid sdkAppId=$sdkAppId');
       return;
     }
     try {
+      _recordSetRegistrationIdResult(
+        code: 'SKIP',
+        message: 'setRegistrationID disabled; use SDK-generated RegistrationID',
+        value: '',
+      );
       final result = await _chatPush
           .registerPush(
             sdkAppId: sdkAppId,
+            appKey: _resolvedTimPushAppKey,
             onNotificationClicked: _onNotificationClicked,
           )
           .timeout(_registerPushTimeout);
@@ -224,6 +297,14 @@ class PushService {
       _logger.debug(
         'push re-registered after IM login, sdkAppId=$sdkAppId, '
         'code=${result.code}, dataLength=${result.data?.length ?? 0}',
+      );
+      final registerMessage = (result.errorMessage ?? '').trim().isNotEmpty
+          ? result.errorMessage!.trim()
+          : (result.code == 0 ? 'registerPush success' : 'registerPush failed');
+      _recordRegisterPushResult(
+        code: result.code.toString(),
+        message: force ? '[force] $registerMessage' : registerMessage,
+        sdkAppId: sdkAppId,
       );
       if (result.code == 0) {
         _available = true;
@@ -255,6 +336,11 @@ class PushService {
       // If an alias was queued while push was unavailable, retry binding now.
       await _retryQueuedAliasIfNeeded();
     } catch (error, stackTrace) {
+      _recordRegisterPushResult(
+        code: 'EXCEPTION',
+        message: error.toString(),
+        sdkAppId: sdkAppId,
+      );
       _logger.error(
         'push re-register after IM login failed',
         error: error,
@@ -381,7 +467,7 @@ class PushService {
     await bindAlias(queued);
   }
 
-  /// Check if the device brand is Honor (独立品牌).
+  /// Check if the device brand is Honor (鐙珛鍝佺墝).
   /// After 2020, Honor separated from Huawei and uses a different push channel.
   /// TIMPush SDK auto-registers Huawei push, but Honor needs manual trigger.
   static Future<bool> _isHonorDevice() async {
@@ -397,7 +483,7 @@ class PushService {
 
   /// Manually trigger Honor push registration via native method channel.
   /// TIMPush SDK skips Honor channel entirely on Honor devices (uses
-  /// Huawei→FCM fallback instead), so we need this manual step.
+  /// Huawei鈫扚CM fallback instead), so we need this manual step.
   Future<void> _registerHonorPush({required int epoch}) async {
     if (_isEpochStale(epoch)) {
       return;
@@ -456,6 +542,10 @@ class PushService {
     );
   }
 
+  void _onAppWakeUpEvent() {
+    _logger.info('push app-wake event received');
+  }
+
   Future<void> _ensurePushListenerRegistered() async {
     if (_pushListenerRegistered) {
       return;
@@ -501,6 +591,9 @@ class PushService {
     if (payload.isEmpty) {
       return;
     }
+    unawaited(
+      _showLocalSystemNotification(payload: payload, title: title, body: desc),
+    );
     _emitIncomingEvent(PushIncomingEventSource.message, payload);
   }
 
@@ -584,8 +677,61 @@ class PushService {
     );
   }
 
+  Future<void> unregisterPush({
+    Duration timeout = _unregisterPushTimeout,
+  }) async {
+    _lifecycleEpoch++;
+    _clearLocalPushRuntimeState();
+    try {
+      final result = await _chatPush.unRegisterPush().timeout(timeout);
+      final code = result.code.toString();
+      final message = (result.errorMessage ?? '').trim().isNotEmpty
+          ? result.errorMessage!.trim()
+          : (result.code == 0
+                ? 'unRegisterPush success'
+                : 'unRegisterPush failed');
+      _recordAliasBindResult(code: 'UNREGISTER_$code', message: message);
+      if (result.code == 0) {
+        _logger.info('push unregistered successfully');
+      } else {
+        _logger.error(
+          'push unregister returned non-zero code: '
+          'code=$code, message=$message',
+        );
+      }
+    } on TimeoutException catch (error, stackTrace) {
+      _recordAliasBindResult(
+        code: 'UNREGISTER_TIMEOUT',
+        message: error.message ?? 'unRegisterPush timeout',
+      );
+      _logger.error(
+        'push unregister timeout',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    } catch (error, stackTrace) {
+      _recordAliasBindResult(
+        code: 'UNREGISTER_EXCEPTION',
+        message: error.toString(),
+      );
+      _logger.error(
+        'push unregister failed',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    } finally {
+      _clearLocalPushRuntimeState();
+    }
+  }
+
   Future<void> unbindAlias() async {
     _lifecycleEpoch++;
+    _clearLocalPushRuntimeState();
+    _recordAliasBindResult(code: 'UNBIND', message: 'Alias unbound');
+    _logger.info('push alias unbound (local state cleared)');
+  }
+
+  void _clearLocalPushRuntimeState() {
     _queuedAlias = null;
     _boundAlias = null;
     _available = false;
@@ -595,14 +741,34 @@ class PushService {
     _ongoingNotifyImLoginSdkAppId = null;
     _lastNotifyImLoginAt = null;
     _lastNotifyImLoginSdkAppId = null;
-    _recordAliasBindResult(code: 'UNBIND', message: 'Alias unbound');
-    _logger.info('push alias unbound (local state cleared)');
   }
 
   void _recordAliasBindResult({required String code, required String message}) {
     _lastAliasBindCode = code;
     _lastAliasBindMessage = message;
     _lastAliasBindTime = DateTime.now();
+  }
+
+  void _recordRegisterPushResult({
+    required String code,
+    required String message,
+    required int sdkAppId,
+  }) {
+    _lastRegisterPushCode = code;
+    _lastRegisterPushMessage = message;
+    _lastRegisterPushSdkAppId = sdkAppId;
+    _lastRegisterPushTime = DateTime.now();
+  }
+
+  void _recordSetRegistrationIdResult({
+    required String code,
+    required String message,
+    required String value,
+  }) {
+    _lastSetRegistrationIdCode = code;
+    _lastSetRegistrationIdMessage = message;
+    _lastSetRegistrationIdValue = value;
+    _lastSetRegistrationIdTime = DateTime.now();
   }
 
   PushOpenPayload? consumePendingOpenPayload() {
@@ -688,12 +854,137 @@ class PushService {
   Future<_AliasBindOutcome> _bindAliasOnce(String alias) async {
     // TIMPush manages device registration automatically upon login to IM SDK.
     // "Binding alias" here is a no-op since TIMPush uses the IM SDK's user
-    // identity — the user is already identified via TUICallKit login.
+    // identity 鈥?the user is already identified via TUICallKit login.
     return const _AliasBindOutcome(
       success: true,
       code: '0',
       message: 'Alias already managed by TIMPush',
     );
+  }
+
+  Future<void> _ensureLocalNotificationInitialized() async {
+    if (_localNotificationInitialized) {
+      return;
+    }
+    try {
+      const androidSettings = AndroidInitializationSettings(
+        '@mipmap/ic_launcher',
+      );
+      const settings = InitializationSettings(android: androidSettings);
+      await _localNotifications.initialize(
+        settings,
+        onDidReceiveNotificationResponse: (response) {
+          _onLocalNotificationTapped(response.payload);
+        },
+      );
+      final androidPlugin = _localNotifications
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >();
+      await androidPlugin?.createNotificationChannel(
+        const AndroidNotificationChannel(
+          _localNotificationChannelId,
+          _localNotificationChannelName,
+          description: _localNotificationChannelDescription,
+          importance: Importance.max,
+        ),
+      );
+      _localNotificationInitialized = true;
+    } catch (error, stackTrace) {
+      _logger.error(
+        'initialize local notifications failed',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  Future<void> _showLocalSystemNotification({
+    required Map<String, dynamic> payload,
+    required String? title,
+    required String? body,
+  }) async {
+    if (!Platform.isAndroid && !Platform.isIOS) {
+      return;
+    }
+    await _ensureLocalNotificationInitialized();
+    if (!_localNotificationInitialized) {
+      return;
+    }
+
+    final resolvedTitle = (title ?? '').trim().isEmpty
+        ? '\u65b0\u6d88\u606f'
+        : title!.trim();
+    final resolvedBody = (body ?? '').trim().isEmpty
+        ? '\u6536\u5230\u4e00\u6761\u63a8\u9001\u6d88\u606f'
+        : body!.trim();
+    const androidDetails = AndroidNotificationDetails(
+      _localNotificationChannelId,
+      _localNotificationChannelName,
+      channelDescription: _localNotificationChannelDescription,
+      importance: Importance.max,
+      priority: Priority.high,
+      category: AndroidNotificationCategory.message,
+      visibility: NotificationVisibility.public,
+    );
+    const details = NotificationDetails(android: androidDetails);
+    final messageId = _asText(payload['messageID']);
+    final notificationId = (messageId ?? DateTime.now().toIso8601String())
+        .hashCode
+        .abs();
+
+    try {
+      await _localNotifications.show(
+        notificationId,
+        resolvedTitle,
+        resolvedBody,
+        details,
+        payload: _buildLocalNotificationPayload(payload),
+      );
+    } catch (error, stackTrace) {
+      _logger.error(
+        'show local system notification failed',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  void _onLocalNotificationTapped(String? rawPayload) {
+    final payloadText = (rawPayload ?? '').trim();
+    if (payloadText.isEmpty) {
+      return;
+    }
+    try {
+      final decoded = jsonDecode(payloadText);
+      if (decoded is! Map) {
+        return;
+      }
+      final event = decoded.map(
+        (key, value) => MapEntry(key.toString(), value),
+      );
+      final openPayload = PushOpenPayload.fromEvent(event);
+      if (_openPayloadController.hasListener) {
+        _pendingOpenPayload = null;
+        _openPayloadController.add(openPayload);
+      } else {
+        _pendingOpenPayload = openPayload;
+      }
+    } catch (error, stackTrace) {
+      _logger.error(
+        'parse local notification payload failed',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  String _buildLocalNotificationPayload(Map<String, dynamic> payload) {
+    try {
+      return jsonEncode(payload);
+    } catch (_) {
+      return '{}';
+    }
   }
 
   Future<String?> _getRegistrationIdSafe() async {
@@ -713,6 +1004,14 @@ class PushService {
       );
       return null;
     }
+  }
+
+  String? get _resolvedTimPushAppKey {
+    final value = AppConstants.timPushAppKey.trim();
+    if (value.isEmpty) {
+      return null;
+    }
+    return value;
   }
 
   void dispose() {
@@ -1019,6 +1318,14 @@ class PushDebugSnapshot {
     required this.lastAliasBindCode,
     required this.lastAliasBindMessage,
     required this.lastAliasBindTime,
+    required this.lastRegisterPushCode,
+    required this.lastRegisterPushMessage,
+    required this.lastRegisterPushTime,
+    required this.lastRegisterPushSdkAppId,
+    required this.lastSetRegistrationIdCode,
+    required this.lastSetRegistrationIdMessage,
+    required this.lastSetRegistrationIdTime,
+    required this.lastSetRegistrationIdValue,
     required this.production,
     required this.channel,
     required this.appKey,
@@ -1033,6 +1340,14 @@ class PushDebugSnapshot {
   final String? lastAliasBindCode;
   final String? lastAliasBindMessage;
   final DateTime? lastAliasBindTime;
+  final String? lastRegisterPushCode;
+  final String? lastRegisterPushMessage;
+  final DateTime? lastRegisterPushTime;
+  final int? lastRegisterPushSdkAppId;
+  final String? lastSetRegistrationIdCode;
+  final String? lastSetRegistrationIdMessage;
+  final DateTime? lastSetRegistrationIdTime;
+  final String? lastSetRegistrationIdValue;
   final bool production;
   final String channel;
   final String appKey;

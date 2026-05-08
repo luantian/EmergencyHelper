@@ -137,6 +137,12 @@ class _MineTabPageState extends State<MineTabPage> {
           : null;
       dependencies.apiClient.cancelAllPendingRequests(reason: 'MANUAL_LOGOUT');
       dependencies.apiClient.resetAuthExpiredState();
+      // Reset call session markers immediately to avoid logout->login races.
+      TUICallSessionService.instance.clearLocalSessionState();
+      await _runWithTimeout(
+        dependencies.pushService.unbindAlias(),
+        timeout: const Duration(seconds: 1),
+      );
       await dependencies.authLocalStore.clear();
       EventCenter.instance.resetSessionCache(notify: false);
       RiskCenter.instance.resetSessionData(notify: false);
@@ -173,6 +179,10 @@ class _MineTabPageState extends State<MineTabPage> {
     required String? accessToken,
     required bool shouldNotifyServer,
   }) async {
+    await _runWithTimeout(
+      dependencies.pushService.unregisterPush(),
+      timeout: const Duration(seconds: 3),
+    );
     if (shouldNotifyServer) {
       await _runWithTimeout(
         _notifyServerLogout(
@@ -182,14 +192,6 @@ class _MineTabPageState extends State<MineTabPage> {
         timeout: const Duration(seconds: 3),
       );
     }
-    await _runWithTimeout(
-      TUICallSessionService.instance.logoutSilently(dependencies: dependencies),
-      timeout: const Duration(seconds: 4),
-    );
-    await _runWithTimeout(
-      dependencies.pushService.unbindAlias(),
-      timeout: const Duration(seconds: 2),
-    );
     await _runWithTimeout(
       dependencies.pushService.clearBadgeAndNotifications(),
       timeout: const Duration(seconds: 2),

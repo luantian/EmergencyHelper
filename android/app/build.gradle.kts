@@ -7,6 +7,7 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
     // Huawei agconnect plugin — processes agconnect-services.json for HMS Core.
     id("com.huawei.agconnect")
+    id("com.hihonor.mcs.asplugin")
 }
 
 configurations.all {
@@ -29,6 +30,7 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -82,6 +84,7 @@ flutter {
 
 dependencies {
     implementation("androidx.multidex:multidex:2.0.1")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     // TIMPush core — needed for direct access to TIMPushManager/Listener in MainApplication.
     implementation("com.tencent.timpush:timpush:8.9.7537")
     // TIMPush vendor channels — add/remove based on your target devices.

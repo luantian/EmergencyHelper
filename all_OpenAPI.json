@@ -2261,6 +2261,112 @@
         }
       }
     },
+    "/admin-api/event/report": {
+      "put": {
+        "tags": [
+          "事件上报"
+        ],
+        "summary": "更新事件",
+        "operationId": "EventReport_updateEventReport",
+        "parameters": [
+          {
+            "name": "tenant-id",
+            "in": "header",
+            "description": "租户编号",
+            "schema": {
+              "type": "integer",
+              "description": "租户编号",
+              "format": "int32",
+              "default": 1
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "认证 Token",
+            "schema": {
+              "type": "string",
+              "description": "认证 Token",
+              "default": "Bearer test1"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventReportUpdateReqVO"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResultBoolean"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "事件上报"
+        ],
+        "summary": "创建事件",
+        "operationId": "EventReport_createEventReport",
+        "parameters": [
+          {
+            "name": "tenant-id",
+            "in": "header",
+            "description": "租户编号",
+            "schema": {
+              "type": "integer",
+              "description": "租户编号",
+              "format": "int32",
+              "default": 1
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "认证 Token",
+            "schema": {
+              "type": "string",
+              "description": "认证 Token",
+              "default": "Bearer test1"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventReportCreateReqVO"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResultLong"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin-api/emergency/shelter/update": {
       "put": {
         "tags": [
@@ -2416,112 +2522,6 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/CommonResultBoolean"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin-api/api/event/report": {
-      "put": {
-        "tags": [
-          "事件上报管理"
-        ],
-        "summary": "更新事件",
-        "operationId": "EventReport_updateEventReport",
-        "parameters": [
-          {
-            "name": "tenant-id",
-            "in": "header",
-            "description": "租户编号",
-            "schema": {
-              "type": "integer",
-              "description": "租户编号",
-              "format": "int32",
-              "default": 1
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "description": "认证 Token",
-            "schema": {
-              "type": "string",
-              "description": "认证 Token",
-              "default": "Bearer test1"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EventReportUpdateReqVO"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/CommonResultBoolean"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "事件上报管理"
-        ],
-        "summary": "创建事件",
-        "operationId": "EventReport_createEventReport",
-        "parameters": [
-          {
-            "name": "tenant-id",
-            "in": "header",
-            "description": "租户编号",
-            "schema": {
-              "type": "integer",
-              "description": "租户编号",
-              "format": "int32",
-              "default": 1
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "description": "认证 Token",
-            "schema": {
-              "type": "string",
-              "description": "认证 Token",
-              "default": "Bearer test1"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EventReportCreateReqVO"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/CommonResultLong"
                 }
               }
             }
@@ -6096,6 +6096,420 @@
         }
       }
     },
+    "/admin-api/event/report/transfer": {
+      "post": {
+        "tags": [
+          "事件上报"
+        ],
+        "summary": "转派事件给多个用户",
+        "operationId": "EventReport_transferEvent",
+        "parameters": [
+          {
+            "name": "tenant-id",
+            "in": "header",
+            "description": "租户编号",
+            "schema": {
+              "type": "integer",
+              "description": "租户编号",
+              "format": "int32",
+              "default": 1
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "认证 Token",
+            "schema": {
+              "type": "string",
+              "description": "认证 Token",
+              "default": "Bearer test1"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventAssignmentReqVO"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResultInteger"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin-api/event/report/statistics/type": {
+      "post": {
+        "tags": [
+          "事件上报"
+        ],
+        "summary": "统计-按事件类型",
+        "operationId": "EventReport_getEventTypeStatistics",
+        "parameters": [
+          {
+            "name": "deptId",
+            "in": "query",
+            "description": "所属街道部门ID",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "所属街道部门ID",
+              "example": 1
+            },
+            "example": 1
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "description": "事件级别：0-一般以下IV级 1-较大III级 2-重大II级 3-特别重大I级",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "事件级别：0-一般以下IV级 1-较大III级 2-重大II级 3-特别重大I级",
+              "example": 0
+            },
+            "example": 0
+          },
+          {
+            "name": "createTimeStart",
+            "in": "query",
+            "description": "创建时间开始",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "创建时间开始",
+              "example": "2024-01-01 00:00:00"
+            },
+            "example": "2024-01-01 00:00:00"
+          },
+          {
+            "name": "createTimeEnd",
+            "in": "query",
+            "description": "创建时间结束",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "创建时间结束",
+              "example": "2024-12-31 23:59:59"
+            },
+            "example": "2024-12-31 23:59:59"
+          },
+          {
+            "name": "tenant-id",
+            "in": "header",
+            "description": "租户编号",
+            "schema": {
+              "type": "integer",
+              "description": "租户编号",
+              "format": "int32",
+              "default": 1
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "认证 Token",
+            "schema": {
+              "type": "string",
+              "description": "认证 Token",
+              "default": "Bearer test1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResultEventTypeStatisticsRespVO"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin-api/event/report/statistics/trend": {
+      "post": {
+        "tags": [
+          "事件上报"
+        ],
+        "summary": "统计-近七天按事件类型趋势",
+        "operationId": "EventReport_getEventTypeTrend",
+        "parameters": [
+          {
+            "name": "deptId",
+            "in": "query",
+            "description": "所属街道部门ID",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "所属街道部门ID",
+              "example": 1
+            },
+            "example": 1
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "description": "事件级别：0-一般以下IV级 1-较大III级 2-重大II级 3-特别重大I级",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "事件级别：0-一般以下IV级 1-较大III级 2-重大II级 3-特别重大I级",
+              "example": 0
+            },
+            "example": 0
+          },
+          {
+            "name": "tenant-id",
+            "in": "header",
+            "description": "租户编号",
+            "schema": {
+              "type": "integer",
+              "description": "租户编号",
+              "format": "int32",
+              "default": 1
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "认证 Token",
+            "schema": {
+              "type": "string",
+              "description": "认证 Token",
+              "default": "Bearer test1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResultEventTypeTrendRespVO"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin-api/event/report/statistics/reportNum": {
+      "post": {
+        "tags": [
+          "事件上报"
+        ],
+        "summary": "统计-(事件总数、待处理数量、已办结数量)",
+        "operationId": "EventReport_getEventReportStatistics",
+        "parameters": [
+          {
+            "name": "deptId",
+            "in": "query",
+            "description": "所属街道部门ID",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "所属街道部门ID",
+              "example": 1
+            },
+            "example": 1
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "description": "事件级别：0-一般以下IV级 1-较大III级 2-重大II级 3-特别重大I级",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "事件级别：0-一般以下IV级 1-较大III级 2-重大II级 3-特别重大I级",
+              "example": 0
+            },
+            "example": 0
+          },
+          {
+            "name": "createTimeStart",
+            "in": "query",
+            "description": "创建时间开始",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "创建时间开始",
+              "example": "2024-01-01 00:00:00"
+            },
+            "example": "2024-01-01 00:00:00"
+          },
+          {
+            "name": "createTimeEnd",
+            "in": "query",
+            "description": "创建时间结束",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "创建时间结束",
+              "example": "2024-12-31 23:59:59"
+            },
+            "example": "2024-12-31 23:59:59"
+          },
+          {
+            "name": "tenant-id",
+            "in": "header",
+            "description": "租户编号",
+            "schema": {
+              "type": "integer",
+              "description": "租户编号",
+              "format": "int32",
+              "default": 1
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "认证 Token",
+            "schema": {
+              "type": "string",
+              "description": "认证 Token",
+              "default": "Bearer test1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResultEventReportStatisticsRespVO"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin-api/event/report/feedback": {
+      "post": {
+        "tags": [
+          "事件上报"
+        ],
+        "summary": "创建事件反馈",
+        "operationId": "EventReport_createEventFeedback",
+        "parameters": [
+          {
+            "name": "tenant-id",
+            "in": "header",
+            "description": "租户编号",
+            "schema": {
+              "type": "integer",
+              "description": "租户编号",
+              "format": "int32",
+              "default": 1
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "认证 Token",
+            "schema": {
+              "type": "string",
+              "description": "认证 Token",
+              "default": "Bearer test1"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventFeedbackCreateReqVO"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResultLong"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin-api/event/report/close": {
+      "post": {
+        "tags": [
+          "事件上报"
+        ],
+        "summary": "办结事件",
+        "operationId": "EventReport_closeEventReport",
+        "parameters": [
+          {
+            "name": "tenant-id",
+            "in": "header",
+            "description": "租户编号",
+            "schema": {
+              "type": "integer",
+              "description": "租户编号",
+              "format": "int32",
+              "default": 1
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "认证 Token",
+            "schema": {
+              "type": "string",
+              "description": "认证 Token",
+              "default": "Bearer test1"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EventCloseReqVO"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResultBoolean"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin-api/emergency/shelter/create": {
       "post": {
         "tags": [
@@ -6411,168 +6825,6 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/TrtcCallbackRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/CommonResultBoolean"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin-api/api/event/report/transfer": {
-      "post": {
-        "tags": [
-          "事件上报管理"
-        ],
-        "summary": "转派事件给多个用户",
-        "operationId": "EventReport_transferEvent",
-        "parameters": [
-          {
-            "name": "tenant-id",
-            "in": "header",
-            "description": "租户编号",
-            "schema": {
-              "type": "integer",
-              "description": "租户编号",
-              "format": "int32",
-              "default": 1
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "description": "认证 Token",
-            "schema": {
-              "type": "string",
-              "description": "认证 Token",
-              "default": "Bearer test1"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EventAssignmentReqVO"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/CommonResultInteger"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin-api/api/event/report/feedback": {
-      "post": {
-        "tags": [
-          "事件上报管理"
-        ],
-        "summary": "创建事件反馈",
-        "operationId": "EventReport_createEventFeedback",
-        "parameters": [
-          {
-            "name": "tenant-id",
-            "in": "header",
-            "description": "租户编号",
-            "schema": {
-              "type": "integer",
-              "description": "租户编号",
-              "format": "int32",
-              "default": 1
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "description": "认证 Token",
-            "schema": {
-              "type": "string",
-              "description": "认证 Token",
-              "default": "Bearer test1"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EventFeedbackCreateReqVO"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/CommonResultLong"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin-api/api/event/report/close": {
-      "post": {
-        "tags": [
-          "事件上报管理"
-        ],
-        "summary": "办结事件",
-        "operationId": "EventReport_closeEventReport",
-        "parameters": [
-          {
-            "name": "tenant-id",
-            "in": "header",
-            "description": "租户编号",
-            "schema": {
-              "type": "integer",
-              "description": "租户编号",
-              "format": "int32",
-              "default": 1
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "description": "认证 Token",
-            "schema": {
-              "type": "string",
-              "description": "认证 Token",
-              "default": "Bearer test1"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/EventCloseReqVO"
               }
             }
           },
@@ -18408,6 +18660,960 @@
         }
       }
     },
+    "/admin-api/event/weather-warning/page": {
+      "get": {
+        "tags": [
+          "管理后台 - 天气预警"
+        ],
+        "summary": "获取天气预警分页列表",
+        "description": "按照发布时间倒序查询",
+        "operationId": "WeatherWarning_getWeatherWarningPage",
+        "parameters": [
+          {
+            "name": "province",
+            "in": "query",
+            "description": "省份",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "省份",
+              "example": "北京市"
+            },
+            "example": "北京市"
+          },
+          {
+            "name": "city",
+            "in": "query",
+            "description": "城市",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "城市",
+              "example": "北京市"
+            },
+            "example": "北京市"
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "description": "预警等级（1-红色，2-橙色，3-黄色，4-蓝色）",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "预警等级（1-红色，2-橙色，3-黄色，4-蓝色）",
+              "example": 1
+            },
+            "example": 1
+          },
+          {
+            "name": "org",
+            "in": "query",
+            "description": "发布机构",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "发布机构",
+              "example": "中央气象台"
+            },
+            "example": "中央气象台"
+          },
+          {
+            "name": "title",
+            "in": "query",
+            "description": "预警标题",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "预警标题",
+              "example": "暴雨"
+            },
+            "example": "暴雨"
+          },
+          {
+            "name": "pubTimeStart",
+            "in": "query",
+            "description": "发布时间开始",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "发布时间开始",
+              "example": "2024-01-01 00:00:00"
+            },
+            "example": "2024-01-01 00:00:00"
+          },
+          {
+            "name": "pubTimeEnd",
+            "in": "query",
+            "description": "发布时间结束",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "发布时间结束",
+              "example": "2024-12-31 23:59:59"
+            },
+            "example": "2024-12-31 23:59:59"
+          },
+          {
+            "name": "pageNo",
+            "in": "query",
+            "description": "页码，从 1 开始",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "页码，从 1 开始",
+              "example": 1
+            },
+            "example": 1
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "description": "每页条数，最大值为 200",
+            "required": true,
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "string",
+              "description": "每页条数，最大值为 200",
+              "example": 10
+            },
+            "example": 10
+          },
+          {
+            "name": "tenant-id",
+            "in": "header",
+            "description": "租户编号",
+            "schema": {
+              "type": "integer",
+              "description": "租户编号",
+              "format": "int32",
+              "default": 1
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "认证 Token",
+            "schema": {
+              "type": "string",
+              "description": "认证 Token",
+              "default": "Bearer test1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResultPageResultWeatherWarningRespVO"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin-api/event/report/{id}": {
+      "get": {
+        "tags": [
+          "事件上报"
+        ],
+        "summary": "获取事件详情",
+        "operationId": "EventReport_getEventReport",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "事件ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "example": 1
+          },
+          {
+            "name": "tenant-id",
+            "in": "header",
+            "description": "租户编号",
+            "schema": {
+              "type": "integer",
+              "description": "租户编号",
+              "format": "int32",
+              "default": 1
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "认证 Token",
+            "schema": {
+              "type": "string",
+              "description": "认证 Token",
+              "default": "Bearer test1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResultEventReportRespVO"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "事件上报"
+        ],
+        "summary": "删除事件",
+        "operationId": "EventReport_deleteEventReport",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "事件ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "example": 1
+          },
+          {
+            "name": "tenant-id",
+            "in": "header",
+            "description": "租户编号",
+            "schema": {
+              "type": "integer",
+              "description": "租户编号",
+              "format": "int32",
+              "default": 1
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "认证 Token",
+            "schema": {
+              "type": "string",
+              "description": "认证 Token",
+              "default": "Bearer test1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResultBoolean"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin-api/event/report/transfer/list": {
+      "get": {
+        "tags": [
+          "事件上报"
+        ],
+        "summary": "获取事件的转派记录列表",
+        "operationId": "EventReport_getEventTransferList",
+        "parameters": [
+          {
+            "name": "eventId",
+            "in": "query",
+            "description": "事件ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "example": 1
+          },
+          {
+            "name": "tenant-id",
+            "in": "header",
+            "description": "租户编号",
+            "schema": {
+              "type": "integer",
+              "description": "租户编号",
+              "format": "int32",
+              "default": 1
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "认证 Token",
+            "schema": {
+              "type": "string",
+              "description": "认证 Token",
+              "default": "Bearer test1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResultListEventAssignmentRespVO"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin-api/event/report/transfer/can": {
+      "get": {
+        "tags": [
+          "事件上报"
+        ],
+        "summary": "校验用户是否可以转派事件",
+        "operationId": "EventReport_canTransferEvent",
+        "parameters": [
+          {
+            "name": "eventId",
+            "in": "query",
+            "description": "事件ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "example": 1
+          },
+          {
+            "name": "tenant-id",
+            "in": "header",
+            "description": "租户编号",
+            "schema": {
+              "type": "integer",
+              "description": "租户编号",
+              "format": "int32",
+              "default": 1
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "认证 Token",
+            "schema": {
+              "type": "string",
+              "description": "认证 Token",
+              "default": "Bearer test1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResultBoolean"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin-api/event/report/statistics": {
+      "get": {
+        "tags": [
+          "事件上报"
+        ],
+        "summary": "事件统计(近30天新增事件数量、近30天处理中事件数量)",
+        "operationId": "EventReport_getEventStatistics",
+        "parameters": [
+          {
+            "name": "tenant-id",
+            "in": "header",
+            "description": "租户编号",
+            "schema": {
+              "type": "integer",
+              "description": "租户编号",
+              "format": "int32",
+              "default": 1
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "认证 Token",
+            "schema": {
+              "type": "string",
+              "description": "认证 Token",
+              "default": "Bearer test1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResultEventStatisticsRespVO"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin-api/event/report/page": {
+      "get": {
+        "tags": [
+          "事件上报"
+        ],
+        "summary": "获取事件分页列表",
+        "operationId": "EventReport_getEventReportPage",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "description": "事件名称",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "事件名称",
+              "example": "城市内涝"
+            },
+            "example": "城市内涝"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "事件状态：0-处理中 1-已办结",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "事件状态：0-处理中 1-已办结",
+              "example": 0
+            },
+            "example": 0
+          },
+          {
+            "name": "statusArray",
+            "in": "query",
+            "description": "事件状态：0-处理中 1-已办结",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "事件状态：0-处理中 1-已办结",
+              "example": 0
+            },
+            "example": 0
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "description": "事件级别：0-一般以下IV级 1-较大III级 2-重大II级 3-特别重大I级",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "事件级别：0-一般以下IV级 1-较大III级 2-重大II级 3-特别重大I级",
+              "example": 0
+            },
+            "example": 0
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "description": "事件类型：字典配置",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "事件类型：字典配置",
+              "example": 0
+            },
+            "example": 0
+          },
+          {
+            "name": "deptId",
+            "in": "query",
+            "description": "所属街道部门ID（数据权限字段）",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "所属街道部门ID（数据权限字段）",
+              "example": 1
+            },
+            "example": 1
+          },
+          {
+            "name": "pageNo",
+            "in": "query",
+            "description": "页码，从 1 开始",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "页码，从 1 开始",
+              "example": 1
+            },
+            "example": 1
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "description": "每页条数，最大值为 200",
+            "required": true,
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "string",
+              "description": "每页条数，最大值为 200",
+              "example": 10
+            },
+            "example": 10
+          },
+          {
+            "name": "tenant-id",
+            "in": "header",
+            "description": "租户编号",
+            "schema": {
+              "type": "integer",
+              "description": "租户编号",
+              "format": "int32",
+              "default": 1
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "认证 Token",
+            "schema": {
+              "type": "string",
+              "description": "认证 Token",
+              "default": "Bearer test1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResultPageResultEventReportRespVO"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin-api/event/report/pageNoPermission": {
+      "get": {
+        "tags": [
+          "事件上报"
+        ],
+        "summary": "获取事件分页列表(大屏)",
+        "operationId": "EventReport_pageNoPermission",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "description": "事件名称",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "事件名称",
+              "example": "城市内涝"
+            },
+            "example": "城市内涝"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "事件状态：0-处理中 1-已办结",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "事件状态：0-处理中 1-已办结",
+              "example": 0
+            },
+            "example": 0
+          },
+          {
+            "name": "statusArray",
+            "in": "query",
+            "description": "事件状态：0-处理中 1-已办结",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "事件状态：0-处理中 1-已办结",
+              "example": 0
+            },
+            "example": 0
+          },
+          {
+            "name": "level",
+            "in": "query",
+            "description": "事件级别：0-一般以下IV级 1-较大III级 2-重大II级 3-特别重大I级",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "事件级别：0-一般以下IV级 1-较大III级 2-重大II级 3-特别重大I级",
+              "example": 0
+            },
+            "example": 0
+          },
+          {
+            "name": "type",
+            "in": "query",
+            "description": "事件类型：字典配置",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "事件类型：字典配置",
+              "example": 0
+            },
+            "example": 0
+          },
+          {
+            "name": "deptId",
+            "in": "query",
+            "description": "所属街道部门ID（数据权限字段）",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "所属街道部门ID（数据权限字段）",
+              "example": 1
+            },
+            "example": 1
+          },
+          {
+            "name": "pageNo",
+            "in": "query",
+            "description": "页码，从 1 开始",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "页码，从 1 开始",
+              "example": 1
+            },
+            "example": 1
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "description": "每页条数，最大值为 200",
+            "required": true,
+            "schema": {
+              "maximum": 200,
+              "minimum": 1,
+              "type": "string",
+              "description": "每页条数，最大值为 200",
+              "example": 10
+            },
+            "example": 10
+          },
+          {
+            "name": "tenant-id",
+            "in": "header",
+            "description": "租户编号",
+            "schema": {
+              "type": "integer",
+              "description": "租户编号",
+              "format": "int32",
+              "default": 1
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "认证 Token",
+            "schema": {
+              "type": "string",
+              "description": "认证 Token",
+              "default": "Bearer test1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResultPageResultEventReportRespVO"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin-api/event/report/modify-delete/can": {
+      "get": {
+        "tags": [
+          "事件上报"
+        ],
+        "summary": "校验用户是否可以修改、删除事件",
+        "operationId": "EventReport_canModifyDeleteEvent",
+        "parameters": [
+          {
+            "name": "tenant-id",
+            "in": "header",
+            "description": "租户编号",
+            "schema": {
+              "type": "integer",
+              "description": "租户编号",
+              "format": "int32",
+              "default": 1
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "认证 Token",
+            "schema": {
+              "type": "string",
+              "description": "认证 Token",
+              "default": "Bearer test1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResultBoolean"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin-api/event/report/feedback/list": {
+      "get": {
+        "tags": [
+          "事件上报"
+        ],
+        "summary": "获取事件的反馈列表",
+        "operationId": "EventReport_getEventFeedbackList",
+        "parameters": [
+          {
+            "name": "eventId",
+            "in": "query",
+            "description": "事件ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "example": 1
+          },
+          {
+            "name": "tenant-id",
+            "in": "header",
+            "description": "租户编号",
+            "schema": {
+              "type": "integer",
+              "description": "租户编号",
+              "format": "int32",
+              "default": 1
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "认证 Token",
+            "schema": {
+              "type": "string",
+              "description": "认证 Token",
+              "default": "Bearer test1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResultListEventFeedbackRespVO"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin-api/event/report/feedback/can": {
+      "get": {
+        "tags": [
+          "事件上报"
+        ],
+        "summary": "校验用户是否可以反馈该事件",
+        "operationId": "EventReport_canFeedback",
+        "parameters": [
+          {
+            "name": "eventId",
+            "in": "query",
+            "description": "事件ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "example": 1
+          },
+          {
+            "name": "tenant-id",
+            "in": "header",
+            "description": "租户编号",
+            "schema": {
+              "type": "integer",
+              "description": "租户编号",
+              "format": "int32",
+              "default": 1
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "认证 Token",
+            "schema": {
+              "type": "string",
+              "description": "认证 Token",
+              "default": "Bearer test1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResultBoolean"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin-api/event/report/dynamic/list": {
+      "get": {
+        "tags": [
+          "事件上报"
+        ],
+        "summary": "获取事件动态列表",
+        "operationId": "EventReport_getEventDynamicList",
+        "parameters": [
+          {
+            "name": "eventId",
+            "in": "query",
+            "description": "事件ID",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            },
+            "example": 1
+          },
+          {
+            "name": "tenant-id",
+            "in": "header",
+            "description": "租户编号",
+            "schema": {
+              "type": "integer",
+              "description": "租户编号",
+              "format": "int32",
+              "default": 1
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "认证 Token",
+            "schema": {
+              "type": "string",
+              "description": "认证 Token",
+              "default": "Bearer test1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResultListEventDynamicRespVO"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin-api/event/report/close/can": {
+      "get": {
+        "tags": [
+          "事件上报"
+        ],
+        "summary": "校验用户是否可以办结事件",
+        "operationId": "EventReport_canCloseEvent",
+        "parameters": [
+          {
+            "name": "tenant-id",
+            "in": "header",
+            "description": "租户编号",
+            "schema": {
+              "type": "integer",
+              "description": "租户编号",
+              "format": "int32",
+              "default": 1
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "认证 Token",
+            "schema": {
+              "type": "string",
+              "description": "认证 Token",
+              "default": "Bearer test1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResultBoolean"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin-api/emergency/shelter/page": {
       "get": {
         "tags": [
@@ -20146,652 +21352,6 @@
               "*/*": {
                 "schema": {
                   "$ref": "#/components/schemas/CommonResultPageResultTrtcCallRecordRespVO"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin-api/api/event/report/{id}": {
-      "get": {
-        "tags": [
-          "事件上报管理"
-        ],
-        "summary": "获取事件详情",
-        "operationId": "EventReport_getEventReport",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "事件ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            },
-            "example": 1
-          },
-          {
-            "name": "tenant-id",
-            "in": "header",
-            "description": "租户编号",
-            "schema": {
-              "type": "integer",
-              "description": "租户编号",
-              "format": "int32",
-              "default": 1
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "description": "认证 Token",
-            "schema": {
-              "type": "string",
-              "description": "认证 Token",
-              "default": "Bearer test1"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/CommonResultEventReportRespVO"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "事件上报管理"
-        ],
-        "summary": "删除事件",
-        "operationId": "EventReport_deleteEventReport",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "事件ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            },
-            "example": 1
-          },
-          {
-            "name": "tenant-id",
-            "in": "header",
-            "description": "租户编号",
-            "schema": {
-              "type": "integer",
-              "description": "租户编号",
-              "format": "int32",
-              "default": 1
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "description": "认证 Token",
-            "schema": {
-              "type": "string",
-              "description": "认证 Token",
-              "default": "Bearer test1"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/CommonResultBoolean"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin-api/api/event/report/transfer/list": {
-      "get": {
-        "tags": [
-          "事件上报管理"
-        ],
-        "summary": "获取事件的转派记录列表",
-        "operationId": "EventReport_getEventTransferList",
-        "parameters": [
-          {
-            "name": "eventId",
-            "in": "query",
-            "description": "事件ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            },
-            "example": 1
-          },
-          {
-            "name": "tenant-id",
-            "in": "header",
-            "description": "租户编号",
-            "schema": {
-              "type": "integer",
-              "description": "租户编号",
-              "format": "int32",
-              "default": 1
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "description": "认证 Token",
-            "schema": {
-              "type": "string",
-              "description": "认证 Token",
-              "default": "Bearer test1"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/CommonResultListEventAssignmentRespVO"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin-api/api/event/report/transfer/can": {
-      "get": {
-        "tags": [
-          "事件上报管理"
-        ],
-        "summary": "校验用户是否可以转派事件",
-        "operationId": "EventReport_canTransferEvent",
-        "parameters": [
-          {
-            "name": "eventId",
-            "in": "query",
-            "description": "事件ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            },
-            "example": 1
-          },
-          {
-            "name": "tenant-id",
-            "in": "header",
-            "description": "租户编号",
-            "schema": {
-              "type": "integer",
-              "description": "租户编号",
-              "format": "int32",
-              "default": 1
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "description": "认证 Token",
-            "schema": {
-              "type": "string",
-              "description": "认证 Token",
-              "default": "Bearer test1"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/CommonResultBoolean"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin-api/api/event/report/statistics": {
-      "get": {
-        "tags": [
-          "事件上报管理"
-        ],
-        "summary": "获取事件统计信息",
-        "description": "统计近30天新增事件数量和近30天处理中事件数量",
-        "operationId": "EventReport_getEventStatistics",
-        "parameters": [
-          {
-            "name": "tenant-id",
-            "in": "header",
-            "description": "租户编号",
-            "schema": {
-              "type": "integer",
-              "description": "租户编号",
-              "format": "int32",
-              "default": 1
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "description": "认证 Token",
-            "schema": {
-              "type": "string",
-              "description": "认证 Token",
-              "default": "Bearer test1"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/CommonResultEventStatisticsRespVO"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin-api/api/event/report/page": {
-      "get": {
-        "tags": [
-          "事件上报管理"
-        ],
-        "summary": "获取事件分页列表",
-        "operationId": "EventReport_getEventReportPage",
-        "parameters": [
-          {
-            "name": "name",
-            "in": "query",
-            "description": "事件名称",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "description": "事件名称",
-              "example": "城市内涝"
-            },
-            "example": "城市内涝"
-          },
-          {
-            "name": "status",
-            "in": "query",
-            "description": "事件状态：0-处理中 1-已办结",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "description": "事件状态：0-处理中 1-已办结",
-              "example": 0
-            },
-            "example": 0
-          },
-          {
-            "name": "level",
-            "in": "query",
-            "description": "事件级别：0-一般以下IV级 1-较大III级 2-重大II级 3-特别重大I级",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "description": "事件级别：0-一般以下IV级 1-较大III级 2-重大II级 3-特别重大I级",
-              "example": 0
-            },
-            "example": 0
-          },
-          {
-            "name": "type",
-            "in": "query",
-            "description": "事件类型：字典配置",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "description": "事件类型：字典配置",
-              "example": 0
-            },
-            "example": 0
-          },
-          {
-            "name": "deptId",
-            "in": "query",
-            "description": "所属街道部门ID（数据权限字段）",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "description": "所属街道部门ID（数据权限字段）",
-              "example": 1
-            },
-            "example": 1
-          },
-          {
-            "name": "pageNo",
-            "in": "query",
-            "description": "页码，从 1 开始",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "description": "页码，从 1 开始",
-              "example": 1
-            },
-            "example": 1
-          },
-          {
-            "name": "pageSize",
-            "in": "query",
-            "description": "每页条数，最大值为 200",
-            "required": true,
-            "schema": {
-              "maximum": 200,
-              "minimum": 1,
-              "type": "string",
-              "description": "每页条数，最大值为 200",
-              "example": 10
-            },
-            "example": 10
-          },
-          {
-            "name": "tenant-id",
-            "in": "header",
-            "description": "租户编号",
-            "schema": {
-              "type": "integer",
-              "description": "租户编号",
-              "format": "int32",
-              "default": 1
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "description": "认证 Token",
-            "schema": {
-              "type": "string",
-              "description": "认证 Token",
-              "default": "Bearer test1"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/CommonResultPageResultEventReportRespVO"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin-api/api/event/report/modify-delete/can": {
-      "get": {
-        "tags": [
-          "事件上报管理"
-        ],
-        "summary": "校验用户是否可以删除事件",
-        "operationId": "EventReport_canModifyDeleteEvent",
-        "parameters": [
-          {
-            "name": "tenant-id",
-            "in": "header",
-            "description": "租户编号",
-            "schema": {
-              "type": "integer",
-              "description": "租户编号",
-              "format": "int32",
-              "default": 1
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "description": "认证 Token",
-            "schema": {
-              "type": "string",
-              "description": "认证 Token",
-              "default": "Bearer test1"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/CommonResultBoolean"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin-api/api/event/report/feedback/list": {
-      "get": {
-        "tags": [
-          "事件上报管理"
-        ],
-        "summary": "获取事件的反馈列表",
-        "operationId": "EventReport_getEventFeedbackList",
-        "parameters": [
-          {
-            "name": "eventId",
-            "in": "query",
-            "description": "事件ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            },
-            "example": 1
-          },
-          {
-            "name": "tenant-id",
-            "in": "header",
-            "description": "租户编号",
-            "schema": {
-              "type": "integer",
-              "description": "租户编号",
-              "format": "int32",
-              "default": 1
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "description": "认证 Token",
-            "schema": {
-              "type": "string",
-              "description": "认证 Token",
-              "default": "Bearer test1"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/CommonResultListEventFeedbackRespVO"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin-api/api/event/report/feedback/can": {
-      "get": {
-        "tags": [
-          "事件上报管理"
-        ],
-        "summary": "校验用户是否可以反馈该事件",
-        "operationId": "EventReport_canFeedback",
-        "parameters": [
-          {
-            "name": "eventId",
-            "in": "query",
-            "description": "事件ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            },
-            "example": 1
-          },
-          {
-            "name": "tenant-id",
-            "in": "header",
-            "description": "租户编号",
-            "schema": {
-              "type": "integer",
-              "description": "租户编号",
-              "format": "int32",
-              "default": 1
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "description": "认证 Token",
-            "schema": {
-              "type": "string",
-              "description": "认证 Token",
-              "default": "Bearer test1"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/CommonResultBoolean"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin-api/api/event/report/dynamic/list": {
-      "get": {
-        "tags": [
-          "事件上报管理"
-        ],
-        "summary": "获取事件动态列表",
-        "operationId": "EventReport_getEventDynamicList",
-        "parameters": [
-          {
-            "name": "eventId",
-            "in": "query",
-            "description": "事件ID",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "format": "int64"
-            },
-            "example": 1
-          },
-          {
-            "name": "tenant-id",
-            "in": "header",
-            "description": "租户编号",
-            "schema": {
-              "type": "integer",
-              "description": "租户编号",
-              "format": "int32",
-              "default": 1
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "description": "认证 Token",
-            "schema": {
-              "type": "string",
-              "description": "认证 Token",
-              "default": "Bearer test1"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/CommonResultListEventDynamicRespVO"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin-api/api/event/report/close/can": {
-      "get": {
-        "tags": [
-          "事件上报管理"
-        ],
-        "summary": "校验用户是否可以办结事件",
-        "operationId": "EventReport_canCloseEvent",
-        "parameters": [
-          {
-            "name": "tenant-id",
-            "in": "header",
-            "description": "租户编号",
-            "schema": {
-              "type": "integer",
-              "description": "租户编号",
-              "format": "int32",
-              "default": 1
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "description": "认证 Token",
-            "schema": {
-              "type": "string",
-              "description": "认证 Token",
-              "default": "Bearer test1"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "*/*": {
-                "schema": {
-                  "$ref": "#/components/schemas/CommonResultBoolean"
                 }
               }
             }
@@ -29753,6 +30313,118 @@
         },
         "description": "管理后台 - 代码生成表和字段的修改 Request VO"
       },
+      "AttachmentVO": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "文件ID",
+            "format": "int64",
+            "example": 1
+          },
+          "name": {
+            "type": "string",
+            "description": "附件名称",
+            "example": "图片1.jpg"
+          },
+          "path": {
+            "type": "string",
+            "description": "附件路径",
+            "example": "/upload/2024/01/01/xxx.jpg"
+          },
+          "type": {
+            "type": "string",
+            "description": "附件类型",
+            "example": "image/jpeg"
+          }
+        },
+        "description": "附件列表",
+        "example": [
+          {
+            "name": "文件1.pdf",
+            "path": "/upload/2024/01/01/file1.pdf"
+          }
+        ]
+      },
+      "EventReportUpdateReqVO": {
+        "required": [
+          "deptId",
+          "description",
+          "id",
+          "latitude",
+          "level",
+          "locationName",
+          "longitude",
+          "name",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "事件ID",
+            "format": "int64",
+            "example": 1
+          },
+          "name": {
+            "type": "string",
+            "description": "事件名称",
+            "example": "城市内涝事件"
+          },
+          "description": {
+            "type": "string",
+            "description": "内容描述",
+            "example": "某路段发生严重积水"
+          },
+          "level": {
+            "type": "integer",
+            "description": "事件级别：0-一般以下IV级 1-较大III级 2-重大II级 3-特别重大I级",
+            "format": "int32",
+            "example": 0
+          },
+          "type": {
+            "type": "integer",
+            "description": "事件类型：字典配置",
+            "format": "int32",
+            "example": 0
+          },
+          "longitude": {
+            "type": "number",
+            "description": "经度",
+            "example": 123.456789
+          },
+          "latitude": {
+            "type": "number",
+            "description": "纬度",
+            "example": 41.1234567
+          },
+          "locationName": {
+            "type": "string",
+            "description": "地点名称",
+            "example": "某某路与某某街交叉口"
+          },
+          "deptId": {
+            "type": "integer",
+            "description": "所属街道部门ID（数据权限字段）",
+            "format": "int64",
+            "example": 1
+          },
+          "attachmentUrls": {
+            "type": "array",
+            "description": "附件列表",
+            "example": [
+              {
+                "name": "文件1.pdf",
+                "path": "/upload/2024/01/01/file1.pdf"
+              }
+            ],
+            "items": {
+              "$ref": "#/components/schemas/AttachmentVO"
+            }
+          }
+        },
+        "description": "事件上报更新请求"
+      },
       "ShelterSaveReqVO": {
         "required": [
           "id"
@@ -29983,118 +30655,6 @@
           }
         },
         "description": "管理后台 - 重点设施新增/修改 Request VO"
-      },
-      "AttachmentVO": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "integer",
-            "description": "文件ID",
-            "format": "int64",
-            "example": 1
-          },
-          "name": {
-            "type": "string",
-            "description": "附件名称",
-            "example": "图片1.jpg"
-          },
-          "path": {
-            "type": "string",
-            "description": "附件路径",
-            "example": "/upload/2024/01/01/xxx.jpg"
-          },
-          "type": {
-            "type": "string",
-            "description": "附件类型",
-            "example": "image/jpeg"
-          }
-        },
-        "description": "附件列表",
-        "example": [
-          {
-            "name": "文件1.pdf",
-            "path": "/upload/2024/01/01/file1.pdf"
-          }
-        ]
-      },
-      "EventReportUpdateReqVO": {
-        "required": [
-          "deptId",
-          "description",
-          "id",
-          "latitude",
-          "level",
-          "locationName",
-          "longitude",
-          "name",
-          "type"
-        ],
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "integer",
-            "description": "事件ID",
-            "format": "int64",
-            "example": 1
-          },
-          "name": {
-            "type": "string",
-            "description": "事件名称",
-            "example": "城市内涝事件"
-          },
-          "description": {
-            "type": "string",
-            "description": "内容描述",
-            "example": "某路段发生严重积水"
-          },
-          "level": {
-            "type": "integer",
-            "description": "事件级别：0-一般以下IV级 1-较大III级 2-重大II级 3-特别重大I级",
-            "format": "int32",
-            "example": 0
-          },
-          "type": {
-            "type": "integer",
-            "description": "事件类型：字典配置",
-            "format": "int32",
-            "example": 0
-          },
-          "longitude": {
-            "type": "number",
-            "description": "经度",
-            "example": 123.456789
-          },
-          "latitude": {
-            "type": "number",
-            "description": "纬度",
-            "example": 41.1234567
-          },
-          "locationName": {
-            "type": "string",
-            "description": "地点名称",
-            "example": "某某路与某某街交叉口"
-          },
-          "deptId": {
-            "type": "integer",
-            "description": "所属街道部门ID（数据权限字段）",
-            "format": "int64",
-            "example": 1
-          },
-          "attachmentUrls": {
-            "type": "array",
-            "description": "附件列表",
-            "example": [
-              {
-                "name": "文件1.pdf",
-                "path": "/upload/2024/01/01/file1.pdf"
-              }
-            ],
-            "items": {
-              "$ref": "#/components/schemas/AttachmentVO"
-            }
-          }
-        },
-        "description": "事件上报更新请求"
       },
       "CommonResultString": {
         "type": "object",
@@ -31115,6 +31675,342 @@
           }
         }
       },
+      "EventReportCreateReqVO": {
+        "required": [
+          "deptId",
+          "description",
+          "latitude",
+          "level",
+          "locationName",
+          "longitude",
+          "name",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "事件名称",
+            "example": "城市内涝事件"
+          },
+          "description": {
+            "type": "string",
+            "description": "内容描述",
+            "example": "某路段发生严重积水"
+          },
+          "level": {
+            "type": "integer",
+            "description": "事件级别：0-一般以下IV级 1-较大III级 2-重大II级 3-特别重大I级",
+            "format": "int32",
+            "example": 0
+          },
+          "type": {
+            "type": "integer",
+            "description": "事件类型：字典配置",
+            "format": "int32",
+            "example": 0
+          },
+          "longitude": {
+            "type": "number",
+            "description": "经度",
+            "example": 123.456789
+          },
+          "latitude": {
+            "type": "number",
+            "description": "纬度",
+            "example": 41.1234567
+          },
+          "locationName": {
+            "type": "string",
+            "description": "地点名称",
+            "example": "某某路与某某街交叉口"
+          },
+          "deptId": {
+            "type": "integer",
+            "description": "所属街道部门ID（数据权限字段）",
+            "format": "int64",
+            "example": 1
+          },
+          "attachmentUrls": {
+            "type": "array",
+            "description": "附件列表",
+            "example": [
+              {
+                "name": "文件1.pdf",
+                "path": "/upload/2024/01/01/file1.pdf"
+              }
+            ],
+            "items": {
+              "$ref": "#/components/schemas/AttachmentVO"
+            }
+          }
+        },
+        "description": "事件上报创建请求"
+      },
+      "EventAssignmentReqVO": {
+        "required": [
+          "content",
+          "eventId",
+          "userIds"
+        ],
+        "type": "object",
+        "properties": {
+          "eventId": {
+            "type": "integer",
+            "description": "事件ID",
+            "format": "int64",
+            "example": 1
+          },
+          "userIds": {
+            "type": "array",
+            "description": "被转派用户ID列表",
+            "example": [
+              1,
+              2,
+              3
+            ],
+            "items": {
+              "type": "integer",
+              "description": "被转派用户ID列表",
+              "format": "int64"
+            }
+          },
+          "content": {
+            "type": "string",
+            "description": "转派内容",
+            "example": "转派内容"
+          }
+        },
+        "description": "事件转派请求"
+      },
+      "CommonResultInteger": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "msg": {
+            "type": "string"
+          },
+          "data": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "CommonResultEventTypeStatisticsRespVO": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "msg": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/EventTypeStatisticsRespVO"
+          }
+        }
+      },
+      "EventTypeCountVO": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "integer",
+            "description": "事件类型值",
+            "format": "int32",
+            "example": 1
+          },
+          "typeName": {
+            "type": "string",
+            "description": "事件类型名称",
+            "example": "火灾"
+          },
+          "count": {
+            "type": "integer",
+            "description": "该类型事件数量",
+            "format": "int64",
+            "example": 50
+          }
+        },
+        "description": "事件类型统计列表"
+      },
+      "EventTypeStatisticsRespVO": {
+        "type": "object",
+        "properties": {
+          "typeList": {
+            "type": "array",
+            "description": "事件类型统计列表",
+            "items": {
+              "$ref": "#/components/schemas/EventTypeCountVO"
+            }
+          },
+          "totalCount": {
+            "type": "integer",
+            "description": "事件总数",
+            "format": "int64"
+          }
+        },
+        "description": "按事件类型统计响应"
+      },
+      "CommonResultEventTypeTrendRespVO": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "msg": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/EventTypeTrendRespVO"
+          }
+        }
+      },
+      "EventTypeTrendItemVO": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "integer",
+            "description": "事件类型值",
+            "format": "int32",
+            "example": 1
+          },
+          "typeName": {
+            "type": "string",
+            "description": "事件类型名称",
+            "example": "城市内涝"
+          },
+          "dailyCounts": {
+            "type": "array",
+            "description": "每天的数量列表（与dateList对应）",
+            "items": {
+              "type": "integer",
+              "description": "每天的数量列表（与dateList对应）",
+              "format": "int64"
+            }
+          }
+        },
+        "description": "事件类型统计列表"
+      },
+      "EventTypeTrendRespVO": {
+        "type": "object",
+        "properties": {
+          "dateList": {
+            "type": "array",
+            "description": "日期列表（近七天日期，格式：MM/dd）",
+            "items": {
+              "type": "string",
+              "description": "日期列表（近七天日期，格式：MM/dd）"
+            }
+          },
+          "typeList": {
+            "type": "array",
+            "description": "事件类型统计列表",
+            "items": {
+              "$ref": "#/components/schemas/EventTypeTrendItemVO"
+            }
+          }
+        },
+        "description": "近七天事件类型趋势统计响应"
+      },
+      "CommonResultEventReportStatisticsRespVO": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "msg": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/EventReportStatisticsRespVO"
+          }
+        }
+      },
+      "EventReportStatisticsRespVO": {
+        "type": "object",
+        "properties": {
+          "totalCount": {
+            "type": "integer",
+            "description": "事件总数",
+            "format": "int64",
+            "example": 150
+          },
+          "pendingCount": {
+            "type": "integer",
+            "description": "待处理事件数量",
+            "format": "int64",
+            "example": 100
+          },
+          "closedCount": {
+            "type": "integer",
+            "description": "已办结事件数量",
+            "format": "int64",
+            "example": 50
+          }
+        },
+        "description": "事件上报统计响应"
+      },
+      "EventFeedbackCreateReqVO": {
+        "required": [
+          "content",
+          "eventId"
+        ],
+        "type": "object",
+        "properties": {
+          "eventId": {
+            "type": "integer",
+            "description": "事件ID",
+            "format": "int64",
+            "example": 1
+          },
+          "content": {
+            "type": "string",
+            "description": "反馈内容",
+            "example": "现场已处置完毕"
+          },
+          "attachmentUrls": {
+            "type": "array",
+            "description": "附件列表",
+            "example": [
+              {
+                "name": "文件1.pdf",
+                "path": "/upload/2024/01/01/file1.pdf"
+              }
+            ],
+            "items": {
+              "$ref": "#/components/schemas/AttachmentVO"
+            }
+          }
+        },
+        "description": "事件反馈创建请求"
+      },
+      "EventCloseReqVO": {
+        "required": [
+          "closeReason",
+          "id"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "事件ID",
+            "format": "int64",
+            "example": 1
+          },
+          "closeReason": {
+            "type": "string",
+            "description": "办结说明",
+            "example": "事件已处理完毕"
+          }
+        },
+        "description": "事件办结请求"
+      },
       "CommonResultTrtcVerifySigRespVO": {
         "type": "object",
         "properties": {
@@ -31260,185 +32156,6 @@
           }
         },
         "description": "TRTC 腾讯云回调请求参数"
-      },
-      "EventReportCreateReqVO": {
-        "required": [
-          "deptId",
-          "description",
-          "latitude",
-          "level",
-          "locationName",
-          "longitude",
-          "name",
-          "type"
-        ],
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "description": "事件名称",
-            "example": "城市内涝事件"
-          },
-          "description": {
-            "type": "string",
-            "description": "内容描述",
-            "example": "某路段发生严重积水"
-          },
-          "level": {
-            "type": "integer",
-            "description": "事件级别：0-一般以下IV级 1-较大III级 2-重大II级 3-特别重大I级",
-            "format": "int32",
-            "example": 0
-          },
-          "type": {
-            "type": "integer",
-            "description": "事件类型：字典配置",
-            "format": "int32",
-            "example": 0
-          },
-          "longitude": {
-            "type": "number",
-            "description": "经度",
-            "example": 123.456789
-          },
-          "latitude": {
-            "type": "number",
-            "description": "纬度",
-            "example": 41.1234567
-          },
-          "locationName": {
-            "type": "string",
-            "description": "地点名称",
-            "example": "某某路与某某街交叉口"
-          },
-          "deptId": {
-            "type": "integer",
-            "description": "所属街道部门ID（数据权限字段）",
-            "format": "int64",
-            "example": 1
-          },
-          "attachmentUrls": {
-            "type": "array",
-            "description": "附件列表",
-            "example": [
-              {
-                "name": "文件1.pdf",
-                "path": "/upload/2024/01/01/file1.pdf"
-              }
-            ],
-            "items": {
-              "$ref": "#/components/schemas/AttachmentVO"
-            }
-          }
-        },
-        "description": "事件上报创建请求"
-      },
-      "EventAssignmentReqVO": {
-        "required": [
-          "content",
-          "eventId",
-          "userIds"
-        ],
-        "type": "object",
-        "properties": {
-          "eventId": {
-            "type": "integer",
-            "description": "事件ID",
-            "format": "int64",
-            "example": 1
-          },
-          "userIds": {
-            "type": "array",
-            "description": "被转派用户ID列表",
-            "example": [
-              1,
-              2,
-              3
-            ],
-            "items": {
-              "type": "integer",
-              "description": "被转派用户ID列表",
-              "format": "int64"
-            }
-          },
-          "content": {
-            "type": "string",
-            "description": "转派内容",
-            "example": "转派内容"
-          }
-        },
-        "description": "事件转派请求"
-      },
-      "CommonResultInteger": {
-        "type": "object",
-        "properties": {
-          "code": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "msg": {
-            "type": "string"
-          },
-          "data": {
-            "type": "integer",
-            "format": "int32"
-          }
-        }
-      },
-      "EventFeedbackCreateReqVO": {
-        "required": [
-          "content",
-          "eventId"
-        ],
-        "type": "object",
-        "properties": {
-          "eventId": {
-            "type": "integer",
-            "description": "事件ID",
-            "format": "int64",
-            "example": 1
-          },
-          "content": {
-            "type": "string",
-            "description": "反馈内容",
-            "example": "现场已处置完毕"
-          },
-          "attachmentUrls": {
-            "type": "array",
-            "description": "附件列表",
-            "example": [
-              {
-                "name": "文件1.pdf",
-                "path": "/upload/2024/01/01/file1.pdf"
-              }
-            ],
-            "items": {
-              "$ref": "#/components/schemas/AttachmentVO"
-            }
-          }
-        },
-        "description": "事件反馈创建请求"
-      },
-      "EventCloseReqVO": {
-        "required": [
-          "closeReason",
-          "id"
-        ],
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "integer",
-            "description": "事件ID",
-            "format": "int64",
-            "example": 1
-          },
-          "closeReason": {
-            "type": "string",
-            "description": "办结说明",
-            "example": "事件已处理完毕"
-          }
-        },
-        "description": "事件办结请求"
       },
       "AppTenantRespVO": {
         "required": [
@@ -31958,6 +32675,11 @@
             "description": "用户昵称",
             "example": "芋道"
           },
+          "mobile": {
+            "type": "string",
+            "description": "手机号码",
+            "example": "15601691300"
+          },
           "deptId": {
             "type": "integer",
             "description": "部门ID",
@@ -31967,6 +32689,11 @@
             "type": "string",
             "description": "部门名称",
             "example": "IT 部"
+          },
+          "postNames": {
+            "type": "string",
+            "description": "岗位名称列表",
+            "example": "[\"开发\",\"测试\"]"
           }
         },
         "description": "管理后台 - 用户精简信息 Response VO"
@@ -37932,6 +38659,588 @@
           }
         }
       },
+      "CommonResultPageResultWeatherWarningRespVO": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "msg": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PageResultWeatherWarningRespVO"
+          }
+        }
+      },
+      "PageResultWeatherWarningRespVO": {
+        "required": [
+          "list",
+          "total"
+        ],
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer",
+            "description": "总量",
+            "format": "int64"
+          },
+          "list": {
+            "type": "array",
+            "description": "数据",
+            "items": {
+              "$ref": "#/components/schemas/WeatherWarningRespVO"
+            }
+          }
+        },
+        "description": "分页结果"
+      },
+      "WeatherWarningRespVO": {
+        "required": [
+          "createTime",
+          "id",
+          "level",
+          "pubTime"
+        ],
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "编号",
+            "format": "int64",
+            "example": 1
+          },
+          "docId": {
+            "type": "integer",
+            "description": "文档ID（来源系统唯一标识）",
+            "format": "int64",
+            "example": 12345
+          },
+          "province": {
+            "type": "string",
+            "description": "省份",
+            "example": "北京市"
+          },
+          "city": {
+            "type": "string",
+            "description": "城市",
+            "example": "北京市"
+          },
+          "title": {
+            "type": "string",
+            "description": "预警标题",
+            "example": "暴雨红色预警"
+          },
+          "content": {
+            "type": "string",
+            "description": "预警内容",
+            "example": "预计未来3小时内将出现暴雨..."
+          },
+          "org": {
+            "type": "string",
+            "description": "发布机构",
+            "example": "中央气象台"
+          },
+          "level": {
+            "type": "integer",
+            "description": "预警等级（1-红色，2-橙色，3-黄色，4-蓝色）",
+            "format": "int32",
+            "example": 1
+          },
+          "levelName": {
+            "type": "string",
+            "description": "预警等级名称",
+            "example": "红色"
+          },
+          "pubTime": {
+            "type": "string",
+            "description": "发布时间",
+            "format": "date-time"
+          },
+          "createTime": {
+            "type": "string",
+            "description": "创建时间",
+            "format": "date-time"
+          }
+        },
+        "description": "管理后台 - 天气预警 Response VO"
+      },
+      "CommonResultEventReportRespVO": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "msg": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/EventReportRespVO"
+          }
+        }
+      },
+      "EventAssignmentRespVO": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "转派ID",
+            "format": "int64",
+            "example": 1
+          },
+          "eventId": {
+            "type": "integer",
+            "description": "事件ID",
+            "format": "int64",
+            "example": 1
+          },
+          "userId": {
+            "type": "integer",
+            "description": "被转派用户ID",
+            "format": "int64",
+            "example": 1
+          },
+          "userName": {
+            "type": "string",
+            "description": "被转派用户名称",
+            "example": "李四"
+          },
+          "assignUserId": {
+            "type": "integer",
+            "description": "转派人ID",
+            "format": "int64",
+            "example": 2
+          },
+          "assignUserName": {
+            "type": "string",
+            "description": "转派人名称",
+            "example": "张三"
+          },
+          "assignTime": {
+            "type": "string",
+            "description": "转派时间",
+            "format": "date-time"
+          },
+          "handleStatus": {
+            "type": "integer",
+            "description": "处理状态：0-待处理 1-处理中 2-已处理",
+            "format": "int32",
+            "example": 0
+          },
+          "handleStatusName": {
+            "type": "string",
+            "description": "处理状态名称",
+            "example": "待处理"
+          },
+          "handleResult": {
+            "type": "string",
+            "description": "处理结果",
+            "example": "已处理完成"
+          },
+          "handleTime": {
+            "type": "string",
+            "description": "处理时间",
+            "format": "date-time"
+          },
+          "createTime": {
+            "type": "string",
+            "description": "创建时间",
+            "format": "date-time"
+          }
+        },
+        "description": "事件转派响应"
+      },
+      "EventDynamicRespVO": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "动态ID",
+            "format": "int64",
+            "example": 1
+          },
+          "eventId": {
+            "type": "integer",
+            "description": "事件ID",
+            "format": "int64",
+            "example": 1
+          },
+          "type": {
+            "type": "integer",
+            "description": "动态类型：1-转派 2-反馈 3-办结",
+            "format": "int32",
+            "example": 1
+          },
+          "typeName": {
+            "type": "string",
+            "description": "动态类型名称",
+            "example": "转派"
+          },
+          "content": {
+            "type": "string",
+            "description": "动态内容",
+            "example": "迅速到现场处理问题"
+          },
+          "operatorId": {
+            "type": "integer",
+            "description": "操作人ID",
+            "format": "int64",
+            "example": 1
+          },
+          "operatorName": {
+            "type": "string",
+            "description": "操作人名称",
+            "example": "张三"
+          },
+          "operatorDeptName": {
+            "type": "string",
+            "description": "操作人部门名称",
+            "example": "技术部"
+          },
+          "attachmentUrls": {
+            "type": "array",
+            "description": "附件列表",
+            "items": {
+              "$ref": "#/components/schemas/AttachmentVO"
+            }
+          },
+          "extraInfo": {
+            "type": "string",
+            "description": "扩展信息",
+            "example": "{\"receiverNames\":\"张伟、李强\"}"
+          },
+          "createTime": {
+            "type": "string",
+            "description": "创建时间",
+            "format": "date-time"
+          }
+        },
+        "description": "事件动态响应"
+      },
+      "EventFeedbackRespVO": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "反馈ID",
+            "format": "int64",
+            "example": 1
+          },
+          "eventId": {
+            "type": "integer",
+            "description": "事件ID",
+            "format": "int64",
+            "example": 1
+          },
+          "userId": {
+            "type": "integer",
+            "description": "反馈人ID",
+            "format": "int64",
+            "example": 1
+          },
+          "userName": {
+            "type": "string",
+            "description": "反馈人名称",
+            "example": "张三"
+          },
+          "content": {
+            "type": "string",
+            "description": "反馈内容",
+            "example": "现场已处置完毕"
+          },
+          "attachmentUrls": {
+            "type": "array",
+            "description": "附件列表",
+            "items": {
+              "$ref": "#/components/schemas/AttachmentVO"
+            }
+          },
+          "createTime": {
+            "type": "string",
+            "description": "创建时间",
+            "format": "date-time"
+          }
+        },
+        "description": "事件反馈响应"
+      },
+      "EventReportRespVO": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "integer",
+            "description": "事件ID",
+            "format": "int64",
+            "example": 1
+          },
+          "name": {
+            "type": "string",
+            "description": "事件名称",
+            "example": "城市内涝事件"
+          },
+          "description": {
+            "type": "string",
+            "description": "内容描述",
+            "example": "某路段发生严重积水"
+          },
+          "status": {
+            "type": "integer",
+            "description": "事件状态：0-处理中 1-已办结",
+            "format": "int32",
+            "example": 0
+          },
+          "statusName": {
+            "type": "string",
+            "description": "事件状态名称",
+            "example": "处理中"
+          },
+          "level": {
+            "type": "integer",
+            "description": "事件级别：0-一般以下IV级 1-较大III级 2-重大II级 3-特别重大I级",
+            "format": "int32",
+            "example": 0
+          },
+          "levelName": {
+            "type": "string",
+            "description": "事件级别名称",
+            "example": "一般以下IV级"
+          },
+          "type": {
+            "type": "integer",
+            "description": "事件类型：字典配置",
+            "format": "int32",
+            "example": 0
+          },
+          "typeName": {
+            "type": "string",
+            "description": "事件类型名称",
+            "example": "城市内涝"
+          },
+          "reportDeptId": {
+            "type": "integer",
+            "description": "上报单位ID",
+            "format": "int64",
+            "example": 1
+          },
+          "reportDeptName": {
+            "type": "string",
+            "description": "上报单位名称",
+            "example": "应急管理局"
+          },
+          "reportUserId": {
+            "type": "integer",
+            "description": "上报人ID",
+            "format": "int64",
+            "example": 1
+          },
+          "reportUserName": {
+            "type": "string",
+            "description": "上报人名称",
+            "example": "张三"
+          },
+          "reportTime": {
+            "type": "string",
+            "description": "上报时间",
+            "format": "date-time"
+          },
+          "longitude": {
+            "type": "number",
+            "description": "经度",
+            "example": 123.456789
+          },
+          "latitude": {
+            "type": "number",
+            "description": "纬度",
+            "example": 41.1234567
+          },
+          "locationName": {
+            "type": "string",
+            "description": "地点名称",
+            "example": "某某路与某某街交叉口"
+          },
+          "deptId": {
+            "type": "integer",
+            "description": "所属街道部门ID（数据权限字段）",
+            "format": "int64",
+            "example": 1
+          },
+          "deptName": {
+            "type": "string",
+            "description": "所属街道部门名称",
+            "example": "三台子街道"
+          },
+          "attachmentUrls": {
+            "type": "array",
+            "description": "附件列表",
+            "items": {
+              "$ref": "#/components/schemas/AttachmentVO"
+            }
+          },
+          "assignments": {
+            "type": "array",
+            "description": "转派记录列表",
+            "items": {
+              "$ref": "#/components/schemas/EventAssignmentRespVO"
+            }
+          },
+          "feedbacks": {
+            "type": "array",
+            "description": "反馈记录列表",
+            "items": {
+              "$ref": "#/components/schemas/EventFeedbackRespVO"
+            }
+          },
+          "dynamics": {
+            "type": "array",
+            "description": "事件动态列表",
+            "items": {
+              "$ref": "#/components/schemas/EventDynamicRespVO"
+            }
+          },
+          "createTime": {
+            "type": "string",
+            "description": "创建时间",
+            "format": "date-time"
+          },
+          "updateTime": {
+            "type": "string",
+            "description": "更新时间",
+            "format": "date-time"
+          }
+        },
+        "description": "事件上报响应"
+      },
+      "CommonResultListEventAssignmentRespVO": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "msg": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EventAssignmentRespVO"
+            }
+          }
+        }
+      },
+      "CommonResultEventStatisticsRespVO": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "msg": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/EventStatisticsRespVO"
+          }
+        }
+      },
+      "EventStatisticsRespVO": {
+        "type": "object",
+        "properties": {
+          "newEventCount": {
+            "type": "integer",
+            "description": "近30天新增事件数量",
+            "format": "int64",
+            "example": 150
+          },
+          "processingEventCount": {
+            "type": "integer",
+            "description": "近30天处理中事件数量",
+            "format": "int64",
+            "example": 45
+          },
+          "processingRiskCount": {
+            "type": "integer",
+            "description": "近30天处理中风险数量",
+            "format": "int64",
+            "example": 45
+          }
+        },
+        "description": "事件统计响应"
+      },
+      "CommonResultPageResultEventReportRespVO": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "msg": {
+            "type": "string"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PageResultEventReportRespVO"
+          }
+        }
+      },
+      "PageResultEventReportRespVO": {
+        "required": [
+          "list",
+          "total"
+        ],
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer",
+            "description": "总量",
+            "format": "int64"
+          },
+          "list": {
+            "type": "array",
+            "description": "数据",
+            "items": {
+              "$ref": "#/components/schemas/EventReportRespVO"
+            }
+          }
+        },
+        "description": "分页结果"
+      },
+      "CommonResultListEventFeedbackRespVO": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "msg": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EventFeedbackRespVO"
+            }
+          }
+        }
+      },
+      "CommonResultListEventDynamicRespVO": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "msg": {
+            "type": "string"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EventDynamicRespVO"
+            }
+          }
+        }
+      },
       "CommonResultPageResultShelterRespVO": {
         "type": "object",
         "properties": {
@@ -38532,475 +39841,6 @@
           }
         },
         "description": "分页结果"
-      },
-      "CommonResultEventReportRespVO": {
-        "type": "object",
-        "properties": {
-          "code": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "msg": {
-            "type": "string"
-          },
-          "data": {
-            "$ref": "#/components/schemas/EventReportRespVO"
-          }
-        }
-      },
-      "EventAssignmentRespVO": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "integer",
-            "description": "转派ID",
-            "format": "int64",
-            "example": 1
-          },
-          "eventId": {
-            "type": "integer",
-            "description": "事件ID",
-            "format": "int64",
-            "example": 1
-          },
-          "userId": {
-            "type": "integer",
-            "description": "被转派用户ID",
-            "format": "int64",
-            "example": 1
-          },
-          "userName": {
-            "type": "string",
-            "description": "被转派用户名称",
-            "example": "李四"
-          },
-          "assignUserId": {
-            "type": "integer",
-            "description": "转派人ID",
-            "format": "int64",
-            "example": 2
-          },
-          "assignUserName": {
-            "type": "string",
-            "description": "转派人名称",
-            "example": "张三"
-          },
-          "assignTime": {
-            "type": "string",
-            "description": "转派时间",
-            "format": "date-time"
-          },
-          "handleStatus": {
-            "type": "integer",
-            "description": "处理状态：0-待处理 1-处理中 2-已处理",
-            "format": "int32",
-            "example": 0
-          },
-          "handleStatusName": {
-            "type": "string",
-            "description": "处理状态名称",
-            "example": "待处理"
-          },
-          "handleResult": {
-            "type": "string",
-            "description": "处理结果",
-            "example": "已处理完成"
-          },
-          "handleTime": {
-            "type": "string",
-            "description": "处理时间",
-            "format": "date-time"
-          },
-          "createTime": {
-            "type": "string",
-            "description": "创建时间",
-            "format": "date-time"
-          }
-        },
-        "description": "事件转派响应"
-      },
-      "EventDynamicRespVO": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "integer",
-            "description": "动态ID",
-            "format": "int64",
-            "example": 1
-          },
-          "eventId": {
-            "type": "integer",
-            "description": "事件ID",
-            "format": "int64",
-            "example": 1
-          },
-          "type": {
-            "type": "integer",
-            "description": "动态类型：1-转派 2-反馈 3-办结",
-            "format": "int32",
-            "example": 1
-          },
-          "typeName": {
-            "type": "string",
-            "description": "动态类型名称",
-            "example": "转派"
-          },
-          "content": {
-            "type": "string",
-            "description": "动态内容",
-            "example": "迅速到现场处理问题"
-          },
-          "operatorId": {
-            "type": "integer",
-            "description": "操作人ID",
-            "format": "int64",
-            "example": 1
-          },
-          "operatorName": {
-            "type": "string",
-            "description": "操作人名称",
-            "example": "张三"
-          },
-          "operatorDeptName": {
-            "type": "string",
-            "description": "操作人部门名称",
-            "example": "技术部"
-          },
-          "attachmentUrls": {
-            "type": "array",
-            "description": "附件列表",
-            "items": {
-              "$ref": "#/components/schemas/AttachmentVO"
-            }
-          },
-          "extraInfo": {
-            "type": "string",
-            "description": "扩展信息",
-            "example": "{\"receiverNames\":\"张伟、李强\"}"
-          },
-          "createTime": {
-            "type": "string",
-            "description": "创建时间",
-            "format": "date-time"
-          }
-        },
-        "description": "事件动态响应"
-      },
-      "EventFeedbackRespVO": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "integer",
-            "description": "反馈ID",
-            "format": "int64",
-            "example": 1
-          },
-          "eventId": {
-            "type": "integer",
-            "description": "事件ID",
-            "format": "int64",
-            "example": 1
-          },
-          "userId": {
-            "type": "integer",
-            "description": "反馈人ID",
-            "format": "int64",
-            "example": 1
-          },
-          "userName": {
-            "type": "string",
-            "description": "反馈人名称",
-            "example": "张三"
-          },
-          "content": {
-            "type": "string",
-            "description": "反馈内容",
-            "example": "现场已处置完毕"
-          },
-          "attachmentUrls": {
-            "type": "array",
-            "description": "附件列表",
-            "items": {
-              "$ref": "#/components/schemas/AttachmentVO"
-            }
-          },
-          "createTime": {
-            "type": "string",
-            "description": "创建时间",
-            "format": "date-time"
-          }
-        },
-        "description": "事件反馈响应"
-      },
-      "EventReportRespVO": {
-        "type": "object",
-        "properties": {
-          "id": {
-            "type": "integer",
-            "description": "事件ID",
-            "format": "int64",
-            "example": 1
-          },
-          "name": {
-            "type": "string",
-            "description": "事件名称",
-            "example": "城市内涝事件"
-          },
-          "description": {
-            "type": "string",
-            "description": "内容描述",
-            "example": "某路段发生严重积水"
-          },
-          "status": {
-            "type": "integer",
-            "description": "事件状态：0-处理中 1-已办结",
-            "format": "int32",
-            "example": 0
-          },
-          "statusName": {
-            "type": "string",
-            "description": "事件状态名称",
-            "example": "处理中"
-          },
-          "level": {
-            "type": "integer",
-            "description": "事件级别：0-一般以下IV级 1-较大III级 2-重大II级 3-特别重大I级",
-            "format": "int32",
-            "example": 0
-          },
-          "levelName": {
-            "type": "string",
-            "description": "事件级别名称",
-            "example": "一般以下IV级"
-          },
-          "type": {
-            "type": "integer",
-            "description": "事件类型：字典配置",
-            "format": "int32",
-            "example": 0
-          },
-          "typeName": {
-            "type": "string",
-            "description": "事件类型名称",
-            "example": "城市内涝"
-          },
-          "reportDeptId": {
-            "type": "integer",
-            "description": "上报单位ID",
-            "format": "int64",
-            "example": 1
-          },
-          "reportDeptName": {
-            "type": "string",
-            "description": "上报单位名称",
-            "example": "应急管理局"
-          },
-          "reportUserId": {
-            "type": "integer",
-            "description": "上报人ID",
-            "format": "int64",
-            "example": 1
-          },
-          "reportUserName": {
-            "type": "string",
-            "description": "上报人名称",
-            "example": "张三"
-          },
-          "reportTime": {
-            "type": "string",
-            "description": "上报时间",
-            "format": "date-time"
-          },
-          "longitude": {
-            "type": "number",
-            "description": "经度",
-            "example": 123.456789
-          },
-          "latitude": {
-            "type": "number",
-            "description": "纬度",
-            "example": 41.1234567
-          },
-          "locationName": {
-            "type": "string",
-            "description": "地点名称",
-            "example": "某某路与某某街交叉口"
-          },
-          "deptId": {
-            "type": "integer",
-            "description": "所属街道部门ID（数据权限字段）",
-            "format": "int64",
-            "example": 1
-          },
-          "deptName": {
-            "type": "string",
-            "description": "所属街道部门名称",
-            "example": "三台子街道"
-          },
-          "attachmentUrls": {
-            "type": "array",
-            "description": "附件列表",
-            "items": {
-              "$ref": "#/components/schemas/AttachmentVO"
-            }
-          },
-          "assignments": {
-            "type": "array",
-            "description": "转派记录列表",
-            "items": {
-              "$ref": "#/components/schemas/EventAssignmentRespVO"
-            }
-          },
-          "feedbacks": {
-            "type": "array",
-            "description": "反馈记录列表",
-            "items": {
-              "$ref": "#/components/schemas/EventFeedbackRespVO"
-            }
-          },
-          "dynamics": {
-            "type": "array",
-            "description": "事件动态列表",
-            "items": {
-              "$ref": "#/components/schemas/EventDynamicRespVO"
-            }
-          },
-          "createTime": {
-            "type": "string",
-            "description": "创建时间",
-            "format": "date-time"
-          },
-          "updateTime": {
-            "type": "string",
-            "description": "更新时间",
-            "format": "date-time"
-          }
-        },
-        "description": "事件上报响应"
-      },
-      "CommonResultListEventAssignmentRespVO": {
-        "type": "object",
-        "properties": {
-          "code": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "msg": {
-            "type": "string"
-          },
-          "data": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/EventAssignmentRespVO"
-            }
-          }
-        }
-      },
-      "CommonResultEventStatisticsRespVO": {
-        "type": "object",
-        "properties": {
-          "code": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "msg": {
-            "type": "string"
-          },
-          "data": {
-            "$ref": "#/components/schemas/EventStatisticsRespVO"
-          }
-        }
-      },
-      "EventStatisticsRespVO": {
-        "type": "object",
-        "properties": {
-          "newEventCount": {
-            "type": "integer",
-            "description": "近30天新增事件数量",
-            "format": "int64",
-            "example": 150
-          },
-          "processingEventCount": {
-            "type": "integer",
-            "description": "近30天处理中事件数量",
-            "format": "int64",
-            "example": 45
-          }
-        },
-        "description": "事件统计响应"
-      },
-      "CommonResultPageResultEventReportRespVO": {
-        "type": "object",
-        "properties": {
-          "code": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "msg": {
-            "type": "string"
-          },
-          "data": {
-            "$ref": "#/components/schemas/PageResultEventReportRespVO"
-          }
-        }
-      },
-      "PageResultEventReportRespVO": {
-        "required": [
-          "list",
-          "total"
-        ],
-        "type": "object",
-        "properties": {
-          "total": {
-            "type": "integer",
-            "description": "总量",
-            "format": "int64"
-          },
-          "list": {
-            "type": "array",
-            "description": "数据",
-            "items": {
-              "$ref": "#/components/schemas/EventReportRespVO"
-            }
-          }
-        },
-        "description": "分页结果"
-      },
-      "CommonResultListEventFeedbackRespVO": {
-        "type": "object",
-        "properties": {
-          "code": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "msg": {
-            "type": "string"
-          },
-          "data": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/EventFeedbackRespVO"
-            }
-          }
-        }
-      },
-      "CommonResultListEventDynamicRespVO": {
-        "type": "object",
-        "properties": {
-          "code": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "msg": {
-            "type": "string"
-          },
-          "data": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/EventDynamicRespVO"
-            }
-          }
-        }
       },
       "SocialUserUnbindReqVO": {
         "required": [

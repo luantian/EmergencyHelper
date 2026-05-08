@@ -51,7 +51,12 @@ class AppConstants {
   static const String emergencyPlacePagePath =
       '/admin-api/emergency/place/page';
   static const String eventReportStatisticsPath =
-      '/admin-api/api/event/report/statistics';
+      '/admin-api/event/report/statistics';
+  static const String timPushAppKey = String.fromEnvironment(
+    'TIM_PUSH_APPKEY',
+    defaultValue:
+        'cTLkjAEwdGW9G41pmVbLSKhiRoDYFQphuy1Vt1fIJkkwEXkr72yJItUKeEP0rjtV',
+  );
 
   static const String defaultTenantId = '';
 

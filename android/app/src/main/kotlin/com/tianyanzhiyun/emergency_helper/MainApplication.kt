@@ -78,10 +78,16 @@ class MainApplication : BmfMapApplication() {
 
     private fun initTIMPushHooks() {
         val start = System.currentTimeMillis()
+        // Keep a single registration path: disable SDK auto register and
+        // register manually after IM login in Flutter.
+        TUICore.callService(
+            TUIConstants.TIMPush.SERVICE_NAME,
+            TUIConstants.TIMPush.METHOD_DISABLE_AUTO_REGISTER_PUSH,
+            null
+        )
+
         Log.d(TAG, "[TIMPush] step 1: register notification-click event")
         // 1. Register notification-click event to TUICore (handles cold-start clicks).
-        // NOTE: We no longer disable auto-register-push, so TIMPush will automatically
-        // register vendor push channels (Huawei/Honor/Xiaomi) on startup.
         registerOnNotificationClickedEvent()
         Log.d(TAG, "[TIMPush] step 1 done in ${System.currentTimeMillis() - start}ms")
 

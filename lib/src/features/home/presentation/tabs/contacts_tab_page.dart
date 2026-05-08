@@ -12,6 +12,7 @@ import 'package:emergency_helper/src/features/event/presentation/event_transfer_
 import 'package:emergency_helper/src/features/trtc/data/trtc_service.dart';
 import 'package:emergency_helper/src/features/trtc/presentation/trtc_call_route_extra.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -229,6 +230,7 @@ class _ContactsTabPageState extends State<ContactsTabPage> {
                           isMatched: personRow.isMatched,
                           onVideoCall: () => _startVideoCall(personRow.contact),
                           onCall: () => _callContact(personRow.contact),
+                          onCopyPhone: () => _copyContactPhone(personRow.contact),
                         );
                       },
                     ),
@@ -596,6 +598,7 @@ class _ContactsTabPageState extends State<ContactsTabPage> {
           confirmButtonText: '确认发起',
           emptySelectionHint: '请至少选择一位成员',
           initialSelectedUserIds: selectedIds,
+          showContentField: false,
         ),
       ),
     );
@@ -736,6 +739,20 @@ class _ContactsTabPageState extends State<ContactsTabPage> {
       builder: (dialogContext) => _DialConfirmDialog(name: name, phone: phone),
     );
     return result ?? false;
+  }
+
+  Future<void> _copyContactPhone(ContactPerson contact) async {
+    final phone = contact.phone.trim();
+    if (phone.isEmpty || phone == '--') {
+      _showSnackBar('无可用电话号码');
+      return;
+    }
+    try {
+      await Clipboard.setData(ClipboardData(text: phone));
+      _showSnackBar('已复制：$phone');
+    } catch (_) {
+      _showSnackBar('复制失败');
+    }
   }
 
   void _showSnackBar(String message) {
@@ -1093,6 +1110,7 @@ class _ContactTile extends StatelessWidget {
     required this.isMatched,
     required this.onVideoCall,
     required this.onCall,
+    required this.onCopyPhone,
   });
 
   final ContactPerson contact;
@@ -1101,6 +1119,7 @@ class _ContactTile extends StatelessWidget {
   final bool isMatched;
   final Future<void> Function() onVideoCall;
   final Future<void> Function() onCall;
+  final Future<void> Function() onCopyPhone;
 
   @override
   Widget build(BuildContext context) {
@@ -1155,6 +1174,29 @@ class _ContactTile extends StatelessWidget {
                       color: Color(0xFF778396),
                     ),
                   ),
+                  if (contact.phone != '--' && contact.phone.isNotEmpty) ...[
+                    const SizedBox(height: 1),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.phone_outlined,
+                          size: 12,
+                          color: Color(0xFF778396),
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: _HighlightedText(
+                            text: contact.phone,
+                            keyword: keyword,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Color(0xFF778396),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -1174,6 +1216,15 @@ class _ContactTile extends StatelessWidget {
               ),
               tooltip: '\u62E8\u6253\u7535\u8BDD',
             ),
+            if (contact.phone != '--' && contact.phone.isNotEmpty)
+              IconButton(
+                onPressed: () async => onCopyPhone(),
+                icon: const Icon(
+                  Icons.content_copy_outlined,
+                  color: AppTheme.primaryBlue,
+                ),
+                tooltip: '\u590D\u5236\u7535\u8BDD',
+              ),
           ],
         ),
       ),
@@ -1821,20 +1872,22 @@ Future<List<ContactGroup>> fetchContactTreeFromApi(ApiClient apiClient) async {
           '\u7528\u6237$userId',
     );
     final deptId = _idText(item['deptId']);
-    final department = _repairMojibakeText(
-      _asText(item['deptName']) ??
-          _asText(_asMap(item['dept'])?['name']) ??
-          _asText(item['orgName']) ??
-          '',
-    );
-    final title = _repairMojibakeText(
-      _asText(item['postName']) ??
-          _asText(item['position']) ??
-          _asText(item['title']) ??
-          _asText(item['jobTitle']) ??
-          _asText(item['deptName']) ??
-          '\u6210\u5458',
-    );
+    // Try to resolve department name from the dept tree first,
+    // since the API often returns deptName as "null" string.
+    String resolvedDeptName = '';
+    if (deptId != null && deptById.containsKey(deptId)) {
+      resolvedDeptName = deptById[deptId]!.name;
+    } else {
+      resolvedDeptName = _repairMojibakeText(
+        _asText(item['deptName']) ??
+            _asText(_asMap(item['dept'])?['name']) ??
+            _asText(item['orgName']) ??
+            '',
+      );
+    }
+    // Use postNames as the title (position/job title).
+    final postName = _extractPostNames(item);
+    final title = postName.isNotEmpty ? postName : '\u6210\u5458';
     final phone = _extractPhoneFromUserMap(item) ?? '--';
     final person = ContactPerson(
       id: 'user_$userId',
@@ -1842,7 +1895,7 @@ Future<List<ContactGroup>> fetchContactTreeFromApi(ApiClient apiClient) async {
       name: nickname,
       title: title,
       phone: phone,
-      department: department,
+      department: resolvedDeptName,
     );
 
     if (deptId != null && deptById.containsKey(deptId)) {
@@ -2015,6 +2068,21 @@ String _repairMojibakeText(String value) {
   return text;
 }
 
+/// Extract postNames from simple-list API response.
+/// postNames can be a String ("\u5C40\u957F") or a List<String> (["\u5C40\u957F", "\u4E66\u8BB0"]).
+String _extractPostNames(Map<String, dynamic> item) {
+  final postNamesRaw = item['postNames'];
+  if (postNamesRaw == null) {
+    return '';
+  }
+  if (postNamesRaw is List) {
+    final parts = postNamesRaw.whereType<String>().where((s) => s.trim().isNotEmpty).toList();
+    return parts.join('\u3001');
+  }
+  final text = postNamesRaw.toString().trim();
+  return text == 'null' || text.isEmpty ? '' : text;
+}
+
 String? _extractPhoneFromUserMap(Map<String, dynamic> item) {
   const keys = <String>[
     'mobile',
@@ -2180,6 +2248,10 @@ bool _looksLikePhoneForDisplay(String normalized) {
     return true;
   }
   if (RegExp(r'^400\d{7}$').hasMatch(normalized)) {
+    return true;
+  }
+  // 7-8 位本地号码（无区号的固话）
+  if (RegExp(r'^\d{7,8}$').hasMatch(normalized)) {
     return true;
   }
 

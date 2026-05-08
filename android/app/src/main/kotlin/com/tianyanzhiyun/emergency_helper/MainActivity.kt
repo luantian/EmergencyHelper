@@ -1,5 +1,7 @@
 package com.tianyanzhiyun.emergency_helper
 
+import android.app.NotificationManager
+import android.content.Context
 import android.os.Bundle
 import android.os.Build
 import android.util.Log
@@ -41,6 +43,17 @@ class MainActivity : FlutterActivity() {
         ).setMethodCallHandler { call, result ->
             if (call.method == "getDeviceBrand") {
                 result.success(Build.BRAND)
+            } else {
+                result.notImplemented()
+            }
+        }
+        // Custom channel for TRTC incoming call workaround
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.tianyanzhiyun/trtc_workaround"
+        ).setMethodCallHandler { call, result ->
+            if (call.method == "stopIncomingCallAndFinish") {
+                stopIncomingCallAndFinish(result)
             } else {
                 result.notImplemented()
             }
@@ -222,6 +235,135 @@ class MainActivity : FlutterActivity() {
         } catch (e: Exception) {
             Log.e(TAG, "nativeLogout: exception ${e.message}", e)
             result.success(null)
+        }
+    }
+
+    /**
+     * Native-side workaround to stop incoming call vibration and ringtone.
+     * Called when another device already accepted the call (FFI bug workaround).
+     * This directly calls TUICallEngine.hangup() which properly closes the
+     * incoming call UI, stops vibration, and stops ringtone.
+     */
+    private fun stopIncomingCallAndFinish(result: MethodChannel.Result) {
+        Log.d(TAG, "stopIncomingCallAndFinish: called")
+        try {
+            // 1. Stop system vibrator immediately
+            try {
+                val vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+                vibrator?.cancel()
+                Log.d(TAG, "stopIncomingCallAndFinish: system vibrator cancelled")
+            } catch (e: Exception) {
+                Log.e(TAG, "stopIncomingCallAndFinish: cancel vibrator failed", e)
+            }
+
+            // 2. Cancel notification
+            try {
+                val notificationManager =
+                    getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                notificationManager?.cancel(9909)
+                Log.d(TAG, "stopIncomingCallAndFinish: notification cancelled")
+            } catch (e: Exception) {
+                Log.e(TAG, "stopIncomingCallAndFinish: cancel notification failed", e)
+            }
+
+            // 3. Call TUICallEngine.hangup() natively via reflection.
+            //    TUICallEngine is from the rtc_room_engine AAR.
+            //    hangup() will:
+            //    - Close the incoming call activity/overlay
+            //    - Stop vibration (stops the CallingVibrator HandlerThread)
+            //    - Stop ringtone
+            //    Since another device already accepted, this only cleans local state.
+            var hangupCalled = false
+            try {
+                // Try various possible TUICallEngine class names
+                val candidateClasses = listOf(
+                    "io.trtc.tuikit.tuicalling.TUICallEngine",
+                    "com.tencent.qcloud.timtuicalling.TUICallEngine",
+                    "com.tencent.qcloud.tuikit.tuicalling.TUICallEngine",
+                    "com.tencent.trtc.tuicalling.TUICallEngine",
+                )
+                for (className in candidateClasses) {
+                    try {
+                        val engineClass = Class.forName(className)
+                        val instanceMethod = engineClass.getDeclaredMethod("instance")
+                        instanceMethod.isAccessible = true
+                        val engine = instanceMethod.invoke(null)
+                        val hangupMethod = engineClass.getDeclaredMethod("hangup")
+                        hangupMethod.invoke(engine)
+                        Log.d(TAG, "stopIncomingCallAndFinish: $className.hangup() called")
+                        hangupCalled = true
+                        break
+                    } catch (e: ClassNotFoundException) {
+                        // Try next class
+                    }
+                }
+                if (!hangupCalled) {
+                    Log.w(TAG, "stopIncomingCallAndFinish: TUICallEngine class not found")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "stopIncomingCallAndFinish: TUICallEngine.hangup failed", e)
+            }
+
+            // 4. If hangup didn't work, try reject() as fallback
+            if (!hangupCalled) {
+                try {
+                    val candidateClasses = listOf(
+                        "io.trtc.tuikit.tuicalling.TUICallEngine",
+                        "com.tencent.qcloud.timtuicalling.TUICallEngine",
+                        "com.tencent.qcloud.tuikit.tuicalling.TUICallEngine",
+                        "com.tencent.trtc.tuicalling.TUICallEngine",
+                    )
+                    for (className in candidateClasses) {
+                        try {
+                            val engineClass = Class.forName(className)
+                            val instanceMethod = engineClass.getDeclaredMethod("instance")
+                            instanceMethod.isAccessible = true
+                            val engine = instanceMethod.invoke(null)
+                            val rejectMethod = engineClass.getDeclaredMethod("reject")
+                            rejectMethod.invoke(engine)
+                            Log.d(TAG, "stopIncomingCallAndFinish: $className.reject() called")
+                            hangupCalled = true
+                            break
+                        } catch (e: ClassNotFoundException) {
+                            // Try next class
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "stopIncomingCallAndFinish: TUICallEngine.reject failed", e)
+                }
+            }
+
+            // 5. Last resort: also call CallingVibrator.stopVibration() via reflection
+            //    to kill the HandlerThread loop directly
+            try {
+                val cvClass = Class.forName(
+                    "com.tencent.cloud.tuikit.flutter.tuicallkit.utils.CallingVibrator"
+                )
+                // Get the singleton instance from TencentCallsUikitPlugin
+                val pluginClass = Class.forName(
+                    "com.tencent.cloud.tuikit.flutter.tuicallkit.TencentCallsUikitPlugin"
+                )
+                val companionField = pluginClass.getDeclaredField("Companion")
+                companionField.isAccessible = true
+                val companion = companionField.get(null)
+                val channelField = pluginClass.getDeclaredField("channel")
+                channelField.isAccessible = true
+                // We can't directly get the CallingVibrator instance from here,
+                // so create a new one and call stopVibration to cancel system vibrator
+                val cvConstructor = cvClass.getDeclaredConstructor(Context::class.java)
+                cvConstructor.isAccessible = true
+                val cvInstance = cvConstructor.newInstance(applicationContext)
+                val stopVibMethod = cvClass.getDeclaredMethod("stopVibration")
+                stopVibMethod.invoke(cvInstance)
+                Log.d(TAG, "stopIncomingCallAndFinish: CallingVibrator.stopVibration() called")
+            } catch (e: Exception) {
+                Log.e(TAG, "stopIncomingCallAndFinish: CallingVibrator.stopVibration failed", e)
+            }
+
+            result.success(true)
+        } catch (e: Exception) {
+            Log.e(TAG, "stopIncomingCallAndFinish: exception", e)
+            result.error("STOP_INCOMING_FAILED", e.message, null)
         }
     }
 }
