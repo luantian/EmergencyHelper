@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:emergency_helper/src/core/constants/app_constants.dart';
 import 'package:emergency_helper/src/core/errors/app_exception.dart';
 import 'package:emergency_helper/src/core/network/api_client.dart';
+import 'package:flutter/foundation.dart';
 
 class NotifyMessageService {
   const NotifyMessageService();
@@ -28,7 +29,17 @@ class NotifyMessageService {
     final map = _asMap(data);
     final total = _asInt(map?['total']) ?? 0;
     final list = _asMapList(map?['list']);
+    debugPrint('[MsgService] total=$total, raw list count=${list.length}');
+    for (var i = 0; i < list.length; i++) {
+      final item = list[i];
+      debugPrint('[MsgService] item[$i] id=${item['id']} templateCode=${item['templateCode']} templateNickname=${item['templateNickname']} templateType=${item['templateType']}');
+      debugPrint('[MsgService] item[$i] title=${item['title']} templateContent=${item['templateContent']}');
+      debugPrint('[MsgService] item[$i] templateParams=${item['templateParams']}');
+    }
     final items = list.map(NotifyMessageItem.fromMap).toList(growable: false);
+    for (var i = 0; i < items.length; i++) {
+      debugPrint('[MsgService] parsed[$i] key=${items[i].messageTypeKey} label=${items[i].messageTypeLabel} title=${items[i].title}');
+    }
     return NotifyMessagePageResult(total: total, list: items);
   }
 
@@ -226,12 +237,20 @@ class NotifyMessageItem {
       title: sender ?? _asText(map['title']) ?? templateCode ?? '',
       content: content,
     );
-    final title = _resolveTitle(
-      typeKey: typeInfo.key,
-      typeLabel: typeInfo.label,
-      templateParams: templateParams,
-      fallback: sender ?? _asText(map['title']) ?? templateCode,
-    );
+    final rawTitle = _asText(map['title']);
+    final title = typeInfo.key == 'weather_warning'
+        ? (rawTitle ?? _resolveTitle(
+            typeKey: typeInfo.key,
+            typeLabel: typeInfo.label,
+            templateParams: templateParams,
+            fallback: sender ?? templateCode,
+          ))
+        : _resolveTitle(
+            typeKey: typeInfo.key,
+            typeLabel: typeInfo.label,
+            templateParams: templateParams,
+            fallback: sender ?? _asText(map['title']) ?? templateCode,
+          );
 
     return NotifyMessageItem(
       id: id,
@@ -319,6 +338,38 @@ class NotifyMessageItem {
     required String title,
     required String content,
   }) {
+    // Direct templateCode matching
+    if (templateCode != null && templateCode.isNotEmpty) {
+      switch (templateCode) {
+        case 'weather_warning_notify':
+          return const _NotifyMessageTypeInfo(
+            'weather_warning',
+            '\u6C14\u8C61\u9884\u8B66',
+          );
+        case 'event_create':
+          return const _NotifyMessageTypeInfo(
+            'event_report',
+            '\u4E8B\u4EF6\u4E0A\u62A5',
+          );
+        case 'event_close':
+          return const _NotifyMessageTypeInfo(
+            'event_dynamic',
+            '\u4E8B\u4EF6\u529E\u7ED3',
+          );
+        case 'event_feedback':
+          return const _NotifyMessageTypeInfo(
+            'event_dynamic',
+            '\u4E8B\u4EF6\u53CD\u9988',
+          );
+        case 'event_transfer':
+          return const _NotifyMessageTypeInfo(
+            'event_dynamic',
+            '\u4E8B\u4EF6\u8F6C\u6D3E',
+          );
+      }
+    }
+
+    // Fallback: fuzzy keyword matching for unknown templateCode
     final text = '${templateCode ?? ''}|$title|$content'
         .toLowerCase()
         .replaceAll(' ', '');

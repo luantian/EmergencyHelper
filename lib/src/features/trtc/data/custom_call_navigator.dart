@@ -10,48 +10,86 @@ class CustomCallNavigator {
   CustomCallNavigator._();
   static final CustomCallNavigator instance = CustomCallNavigator._();
 
+  /// Number of call pages pushed (IncomingCall + InCall).
+  int _callPagesPushed = 0;
+
   void navigateToIncomingCall({
     required String callId,
     required String callerId,
     required String callerName,
     required String mediaType,
   }) {
+    _callPagesPushed++;
     final context = AppRouter.navigatorKey.currentContext;
+    debugPrint('[TRTC-DEBUG][Navigator] navigateToIncomingCall callId=$callId caller=$callerName mediaType=$mediaType context=${context != null ? "OK" : "NULL"}');
     if (context == null) return;
     final path = '${RoutePaths.trtcIncomingCall}'
         '?callId=${Uri.encodeComponent(callId)}'
         '&callerId=${Uri.encodeComponent(callerId)}'
         '&callerName=${Uri.encodeComponent(callerName)}'
         '&mediaType=$mediaType';
+    debugPrint('[TRTC-DEBUG][Navigator] pushing path: $path');
     GoRouter.of(context).push(path);
   }
+
+  /// Callback set by InCallPage when mounted.
+  /// When onCallBegin fires for the caller (already on InCallPage),
+  /// this is invoked to re-mount video widgets instead of navigating.
+  VoidCallback? onCallBeginForInCallPage;
 
   void navigateToInCall({
     required String callId,
     required String mediaType,
+    String selfUserId = '',
+    bool isCallerSide = true,
   }) {
-    final context = AppRouter.navigatorKey.currentContext;
-    if (context == null) return;
-    // Pop incoming call page if present, then push in-call page.
-    final navigator = Navigator.of(context);
-    navigator.popUntil(
-      (route) => route.settings.name != RoutePaths.trtcIncomingCall,
-    );
-    final path = '${RoutePaths.trtcInCall}'
-        '?callId=${Uri.encodeComponent(callId)}'
-        '&mediaType=$mediaType';
-    GoRouter.of(context).push(path);
+    try {
+      final context = AppRouter.navigatorKey.currentContext;
+      debugPrint('[TRTC-DEBUG][Navigator] navigateToInCall callId=$callId mediaType=$mediaType selfUserId=$selfUserId isCallerSide=$isCallerSide context=${context != null ? "OK" : "NULL"}');
+      if (context == null) {
+        debugPrint('[TRTC-DEBUG][Navigator] ABORT: context is null');
+        return;
+      }
+
+      _callPagesPushed++;
+      final navigator = Navigator.of(context);
+      final path = '${RoutePaths.trtcInCall}'
+          '?callId=${Uri.encodeComponent(callId)}'
+          '&mediaType=$mediaType'
+          '&selfUserId=${Uri.encodeComponent(selfUserId)}'
+          '&isCallerSide=$isCallerSide';
+
+      debugPrint('[TRTC-DEBUG][Navigator] pushing path: $path');
+      GoRouter.of(context).push(path);
+    } catch (e, st) {
+      debugPrint('[TRTC-DEBUG][Navigator] navigateToInCall crashed: $e');
+      debugPrint('[TRTC-DEBUG][Navigator] stack: $st');
+    }
   }
 
   void dismissAllCallScreens() {
     final context = AppRouter.navigatorKey.currentContext;
+    debugPrint('[TRTC-DEBUG][Navigator] dismissAllCallScreens context=${context != null ? "OK" : "NULL"} pushCount=$_callPagesPushed');
     if (context == null) return;
     final navigator = Navigator.of(context);
-    navigator.popUntil(
-      (route) =>
-          route.settings.name != RoutePaths.trtcIncomingCall &&
-          route.settings.name != RoutePaths.trtcInCall,
-    );
+    // Pop exactly the number of call pages we pushed.
+    debugPrint('[TRTC-DEBUG][Navigator] calling _safePopCallPages from dismissAllCallScreens');
+    _safePopCallPages(navigator, _callPagesPushed);
+    _callPagesPushed = 0;
+  }
+
+  /// Pop call pages from the top of the stack without over-popping.
+  /// Pops exactly [count] pages, or fewer if the stack runs out.
+  void _safePopCallPages(NavigatorState navigator, [int count = 2]) {
+    int toPop = count;
+    while (toPop > 0 && navigator.canPop()) {
+      debugPrint('[TRTC-DEBUG][Navigator] _safePopCallPages: popping $toPop more, canPop=true');
+      navigator.pop();
+      toPop--;
+    }
+    if (toPop > 0) {
+      debugPrint('[TRTC-DEBUG][Navigator] _safePopCallPages: stopped, cannot pop further');
+    }
   }
 
   void showToast(String message) {

@@ -428,4 +428,8 @@ abstract class CallStore {
   ///
   /// - [jsonMap] : JSON parameter map
   Future<void> callExperimentalAPI(Map<String, dynamic> jsonMap);
+
+  /// Manually populate selfInfo and activeCall for the caller side after calls() succeeds.
+  /// This is needed because the SDK observer only fires onCallBegin for the callee side.
+  void populateCallerState(String selfUserId, String selfUserName, List<String> inviteeIds, CallMediaType mediaType);
 }

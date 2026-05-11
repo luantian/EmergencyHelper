@@ -1,15 +1,23 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 
+import 'package:atomic_x_core/api/call/call_store.dart';
+import 'package:atomic_x_core/api/device/device_store.dart';
+import 'package:emergency_helper/src/core/constants/app_constants.dart';
 import 'package:emergency_helper/src/core/di/app_dependencies.dart';
 import 'package:emergency_helper/src/core/errors/app_exception.dart';
 import 'package:emergency_helper/src/features/push/data/push_service.dart';
+import 'package:emergency_helper/src/features/trtc/data/call_phase.dart';
 import 'package:emergency_helper/src/features/trtc/data/custom_call_navigator.dart';
+import 'package:emergency_helper/src/features/trtc/data/participant_name_registry.dart';
 import 'package:emergency_helper/src/features/trtc/data/trtc_service.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:rtc_room_engine/rtc_room_engine.dart' as rtc;
-import 'package:tencent_calls_uikit/tencent_calls_uikit.dart';
+import 'package:tencent_cloud_chat_sdk/enum/V2TimAdvancedMsgListener.dart';
+import 'package:tencent_cloud_chat_sdk/models/v2_tim_message.dart';
+import 'package:tencent_cloud_chat_sdk/tencent_im_sdk_plugin.dart';
 
 class TUICallSessionService {
   TUICallSessionService._();
@@ -46,11 +54,10 @@ class TUICallSessionService {
   rtc.TUICallObserver? _globalCallObserver;
   final List<void Function(String message)> _callNotificationListeners = [];
 
-  /// Track active incoming call IDs on this device.
-  final Set<String> _incomingCallIds = {};
-
-  /// Whether the local user answered the current incoming call.
-  bool _localUserAnsweredIncoming = false;
+  /// Global IM message listener to detect TUICall signaling messages
+  /// that the FFI layer fails to forward (e.g., otherDeviceAccepted).
+  V2TimAdvancedMsgListener? _imSignalingListener;
+  final Set<String> _handledCallIds = {};
 
   /// Register listener to receive multi-device call sync events.
   void addCallNotificationListener(void Function(String) listener) {
@@ -67,32 +74,11 @@ class TUICallSessionService {
     }
   }
 
-  /// Mark a call as incoming on this device. Call when incoming call UI shows.
-  void markIncomingCall(String callId) {
-    _incomingCallIds.add(callId);
-    debugPrint('[TRTC-Session] markIncomingCall callId=$callId, 当前集合=$_incomingCallIds');
-  }
-
-  /// Mark that the local user answered the current incoming call.
-  void markLocalUserAnswered() {
-    _localUserAnsweredIncoming = true;
-    debugPrint('[TRTC-Session] markLocalUserAnswered');
-  }
-
-  /// Check if the call ended due to another device handling it (FFI bug workaround).
-  /// Returns true if this was an incoming call on this device that was NOT answered locally.
-  bool _isOtherDeviceHandled(String callId) {
-    final wasIncoming = _incomingCallIds.remove(callId);
-    final answeredLocally = _localUserAnsweredIncoming;
-    _localUserAnsweredIncoming = false;
-    debugPrint('[TRTC-Workaround] callId=$callId wasIncoming=$wasIncoming answeredLocally=$answeredLocally');
-    return wasIncoming && !answeredLocally;
-  }
-
   /// Stop everything and notify — await native cleanup before showing toast.
   Future<void> _stopAndNotify(String message) async {
     await _stopIncomingCall();
     CustomCallNavigator.instance.dismissAllCallScreens();
+    CallSessionManager.instance.resetToIdle();
     _notifyCall(message);
   }
 
@@ -119,118 +105,208 @@ class TUICallSessionService {
     _globalCallObserver = rtc.TUICallObserver(
       onCallReceived: (callId, callerId, calleeIdList, mediaType, info) {
         debugPrint(
-          '[TRTC-GlobalObserver] 📞 onCallReceived callId=$callId '
-          'callerId=$callerId mediaType=$mediaType',
+          '[TRTC-DEBUG][Observer] onCallReceived callId=$callId '
+          'callerId=$callerId mediaType=$mediaType calleeList=$calleeIdList',
         );
-        markIncomingCall(callId);
+        final mediaStr = _mediaTypeToString(mediaType);
+        CallSessionManager.instance.markIncomingCall(
+          callId: callId,
+          callerId: callerId,
+          mediaType: mediaStr,
+        );
         // Navigate to custom incoming call UI.
+        final callerName = _resolveCallerName(callerId);
+        // Register caller name for display in call UI
+        ParticipantNameRegistry.register(callerId, callerName);
+        debugPrint('[TRTC-DEBUG][Observer] navigating to trtcIncomingCall for callId=$callId');
         CustomCallNavigator.instance.navigateToIncomingCall(
           callId: callId,
           callerId: callerId,
-          callerName: _resolveCallerName(callerId),
-          mediaType: _mediaTypeToString(mediaType),
+          callerName: callerName,
+          mediaType: mediaStr,
         );
       },
       onCallNotConnected: (callId, mediaType, reason, userId, info) {
         debugPrint(
-          '[TRTC-GlobalObserver] 🔔 onCallNotConnected callId=$callId '
-          'reason=$reason(${reason.index}) userId=$userId',
+          '[TRTC-DEBUG][Observer] onCallNotConnected callId=$callId '
+          'reason=$reason(${reason.index}) userId=$userId mediaType=${_mediaTypeToString(mediaType)}',
         );
+        // Save session state BEFORE _dismissCall resets it to idle.
+        // This is critical for distinguishing "caller hung up" from
+        // "other device accepted" — both arrive as hangup(1).
+        final sessionBefore = CallSessionManager.instance.current;
+        final wasIncomingRinging = sessionBefore.phase == CallPhase.incomingRinging && sessionBefore.callId == callId;
+        debugPrint('[TRTC-DEBUG][Observer] wasIncomingRinging=$wasIncomingRinging phase=${sessionBefore.phase}');
+        _dismissCall(callId);
         switch (reason) {
           case rtc.CallEndReason.otherDeviceAccepted:
-            _incomingCallIds.remove(callId);
-            _localUserAnsweredIncoming = false;
+            debugPrint('[TRTC-DEBUG][Observer] branch: otherDeviceAccepted');
             _notifyCall('通话已在其他设备接听');
+            CallSessionManager.instance.resetToIdle();
+            CustomCallNavigator.instance.dismissAllCallScreens();
             break;
           case rtc.CallEndReason.hangup:
-            // 可能是正常挂断，也可能是 FFI bug 映射
-            final wasIncoming = _incomingCallIds.remove(callId);
-            if (wasIncoming && !_localUserAnsweredIncoming) {
-              debugPrint('[TRTC-Workaround] hangup on incoming call → other device handled');
-              _localUserAnsweredIncoming = false;
+            debugPrint('[TRTC-DEBUG][Observer] branch: hangup');
+            // If we were in incoming ringing and didn't answer locally,
+            // the call was accepted on another device — NOT caller hangup.
+            if (wasIncomingRinging) {
+              debugPrint('[TRTC-DEBUG][Observer] onCallNotConnected: hangup during incomingRinging → other device accepted');
+              _notifyCall('通话已在其他设备接听');
+              CallSessionManager.instance.resetToIdle();
               CustomCallNavigator.instance.dismissAllCallScreens();
-              unawaited(_stopAndNotify('通话已在其他设备接听'));
             } else {
-              _localUserAnsweredIncoming = false;
+              final selfUserId = instance.activeUserId;
+              if (userId.isNotEmpty && selfUserId.isNotEmpty && userId != selfUserId) {
+                debugPrint('[TRTC-DEBUG][Observer] onCallNotConnected: hangup by remote (userId=$userId)');
+                _notifyCall('对方已挂断通话');
+                CallSessionManager.instance.resetToIdle();
+                CustomCallNavigator.instance.dismissAllCallScreens();
+              } else {
+                debugPrint('[TRTC-DEBUG][Observer] onCallNotConnected: hangup by self (userId=$userId)');
+                CallSessionManager.instance.resetToIdle();
+                CustomCallNavigator.instance.dismissAllCallScreens();
+              }
             }
             break;
           case rtc.CallEndReason.reject:
           case rtc.CallEndReason.unknown:
             // ⚠️ rtc_room_engine 4.0.1 FFI bug:
             // otherDeviceAccepted(7) 被映射为 unknown(0) 或 reject(2)
-            if (_isOtherDeviceHandled(callId)) {
-              // 手动挂断来电以停止 SDK 的响铃 UI（FFI bug 导致 SDK 无法自动关闭）
-              CustomCallNavigator.instance.dismissAllCallScreens();
+            debugPrint('[TRTC-DEBUG][Observer] branch: reject/unknown');
+            final session = CallSessionManager.instance.current;
+            if (session.phase == CallPhase.incomingRinging && session.callId == callId) {
+              // Incoming call not answered locally → other device handled
+              debugPrint('[TRTC-DEBUG][Observer] incomingRinging not answered → other device handled');
               unawaited(_stopAndNotify('通话已在其他设备接听'));
             } else {
+              CallSessionManager.instance.resetToIdle();
+              CustomCallNavigator.instance.dismissAllCallScreens();
               if (reason == rtc.CallEndReason.unknown) {
-                debugPrint('[TRTC] 真实 unknown，忽略');
+                debugPrint('[TRTC-DEBUG][Observer] real unknown, ignoring');
+                _notifyCall('通话未接通');
               } else {
                 _notifyCall('通话被拒绝');
               }
             }
             break;
           case rtc.CallEndReason.otherDeviceReject:
-            _incomingCallIds.remove(callId);
-            _localUserAnsweredIncoming = false;
+            debugPrint('[TRTC-DEBUG][Observer] branch: otherDeviceReject');
             _notifyCall('通话已在其他设备拒绝');
+            CallSessionManager.instance.resetToIdle();
+            CustomCallNavigator.instance.dismissAllCallScreens();
             break;
           case rtc.CallEndReason.canceled:
-            _incomingCallIds.remove(callId);
-            _localUserAnsweredIncoming = false;
-            _notifyCall('对方已取消通话');
+            debugPrint('[TRTC-DEBUG][Observer] branch: canceled');
+            final selfUserId = instance.activeUserId;
+            if (userId.isNotEmpty && selfUserId.isNotEmpty && userId != selfUserId) {
+              debugPrint('[TRTC-DEBUG][Observer] onCallNotConnected: canceled by remote (userId=$userId)');
+              _notifyCall('对方已取消通话');
+            } else {
+              debugPrint('[TRTC-DEBUG][Observer] onCallNotConnected: canceled by self (userId=$userId)');
+              _notifyCall('通话已取消');
+            }
+            CallSessionManager.instance.resetToIdle();
+            CustomCallNavigator.instance.dismissAllCallScreens();
             break;
           case rtc.CallEndReason.noResponse:
-            _incomingCallIds.remove(callId);
-            _localUserAnsweredIncoming = false;
+            debugPrint('[TRTC-DEBUG][Observer] branch: noResponse');
             _notifyCall('对方无应答');
+            CallSessionManager.instance.resetToIdle();
+            CustomCallNavigator.instance.dismissAllCallScreens();
             break;
           case rtc.CallEndReason.lineBusy:
-            _incomingCallIds.remove(callId);
-            _localUserAnsweredIncoming = false;
+            debugPrint('[TRTC-DEBUG][Observer] branch: lineBusy');
             _notifyCall('对方正忙');
+            CallSessionManager.instance.resetToIdle();
+            CustomCallNavigator.instance.dismissAllCallScreens();
             break;
           default:
-            _incomingCallIds.remove(callId);
-            _localUserAnsweredIncoming = false;
-            debugPrint('[TRTC-GlobalObserver] 未处理的 reason: ${reason.index}');
+            debugPrint('[TRTC-DEBUG][Observer] branch: DEFAULT (unhandled reason=${reason.index})');
+            CallSessionManager.instance.resetToIdle();
+            CustomCallNavigator.instance.dismissAllCallScreens();
         }
       },
       onCallBegin: (callId, mediaType, info) {
-        _incomingCallIds.remove(callId);
-        _localUserAnsweredIncoming = false;
+        final mediaStr = _mediaTypeToString(mediaType);
+        CallSessionManager.instance.markInCall(callId: callId);
         debugPrint(
-          '[TRTC-GlobalObserver] 🟢 onCallBegin callId=$callId '
-          'mediaType=$mediaType',
+          '[TRTC-DEBUG][Observer] onCallBegin callId=$callId '
+          'mediaType=$mediaStr',
         );
-        // Transition to in-call UI.
+        debugPrint('[TRTC-DEBUG][Observer] onCallBegin: current session phase=${CallSessionManager.instance.current.phase}');
+        debugPrint('[TRTC-DEBUG][Observer] onCallBegin: onCallBeginForInCallPage=${CustomCallNavigator.instance.onCallBeginForInCallPage != null}');
+        // NOTE: Do NOT call DeviceStore.openLocalCamera here.
+        // The camera is opened by CallParticipantView when InCallPage renders,
+        // which needs the view to be created for proper video binding.
+        // Call _initDeviceStates in InCallPage to open microphone.
+
+        // For the caller side (already on InCallPage), trigger video re-mount
+        // via callback instead of navigating (which would pop the existing page).
+        if (CustomCallNavigator.instance.onCallBeginForInCallPage != null) {
+          debugPrint('[TRTC-DEBUG][Observer] caller already on InCallPage, triggering callback');
+          CustomCallNavigator.instance.onCallBeginForInCallPage!();
+          return;
+        }
+
+        // For the callee side (on IncomingCallPage), navigate to InCallPage.
+        // For the callee side (on IncomingCallPage), navigate to InCallPage.
+        debugPrint('[TRTC-DEBUG][Observer] navigating to trtcInCall callId=$callId mediaType=$mediaStr');
         CustomCallNavigator.instance.navigateToInCall(
           callId: callId,
-          mediaType: _mediaTypeToString(mediaType),
+          mediaType: mediaStr,
+          selfUserId: instance.activeUserId,
+          isCallerSide: false,
         );
       },
       onCallEnd: (callId, mediaType, reason, userId, totalTime, info) {
         debugPrint(
-          '[TRTC-GlobalObserver] 🔴 onCallEnd callId=$callId '
+          '[TRTC-DEBUG][Observer] onCallEnd callId=$callId '
           'reason=$reason(${reason.index}) userId=$userId totalTime=${totalTime}s',
         );
+        // Save session state BEFORE _dismissCall resets it to idle.
+        final sessionBefore = CallSessionManager.instance.current;
+        final wasIncomingRinging = sessionBefore.phase == CallPhase.incomingRinging && sessionBefore.callId == callId;
+        debugPrint('[TRTC-DEBUG][Observer] onCallEnd wasIncomingRinging=$wasIncomingRinging phase=${sessionBefore.phase}');
+        _dismissCall(callId);
         switch (reason) {
           case rtc.CallEndReason.otherDeviceAccepted:
-            _incomingCallIds.remove(callId);
-            _localUserAnsweredIncoming = false;
-            CustomCallNavigator.instance.dismissAllCallScreens();
+            debugPrint('[TRTC-DEBUG][Observer] onCallEnd branch: otherDeviceAccepted');
             _notifyCall('通话已在其他设备接听');
+            CallSessionManager.instance.resetToIdle();
+            CustomCallNavigator.instance.dismissAllCallScreens();
             break;
           case rtc.CallEndReason.lineBusy:
           case rtc.CallEndReason.otherDeviceReject:
-            _incomingCallIds.remove(callId);
-            _localUserAnsweredIncoming = false;
-            CustomCallNavigator.instance.dismissAllCallScreens();
+            debugPrint('[TRTC-DEBUG][Observer] onCallEnd branch: lineBusy/otherDeviceReject');
             _notifyCall('对方正忙');
+            CallSessionManager.instance.resetToIdle();
+            CustomCallNavigator.instance.dismissAllCallScreens();
+            break;
+          case rtc.CallEndReason.hangup:
+            // If we were in incoming ringing and didn't answer locally,
+            // the call was accepted on another device — NOT caller hangup.
+            if (wasIncomingRinging) {
+              debugPrint('[TRTC-DEBUG][Observer] onCallEnd: hangup during incomingRinging → other device accepted');
+              _notifyCall('通话已在其他设备接听');
+              CallSessionManager.instance.resetToIdle();
+              CustomCallNavigator.instance.dismissAllCallScreens();
+            } else {
+              final selfUserId = instance.activeUserId;
+              if (userId.isNotEmpty && selfUserId.isNotEmpty && userId != selfUserId) {
+                debugPrint('[TRTC-DEBUG][Observer] onCallEnd branch: hangup by remote (userId=$userId)');
+                _notifyCall('对方已挂断通话');
+                CallSessionManager.instance.resetToIdle();
+                CustomCallNavigator.instance.dismissAllCallScreens();
+              } else {
+                debugPrint('[TRTC-DEBUG][Observer] onCallEnd branch: hangup by self (userId=$userId)');
+                CallSessionManager.instance.resetToIdle();
+                CustomCallNavigator.instance.dismissAllCallScreens();
+              }
+            }
             break;
           default:
-            _incomingCallIds.remove(callId);
-            _localUserAnsweredIncoming = false;
+            debugPrint('[TRTC-DEBUG][Observer] onCallEnd branch: default');
+            CallSessionManager.instance.resetToIdle();
             CustomCallNavigator.instance.dismissAllCallScreens();
             break;
         }
@@ -238,6 +314,112 @@ class TUICallSessionService {
     );
     rtc.TUICallEngine.instance.addObserver(_globalCallObserver!);
     debugPrint('[TRTC-GlobalObserver] ✅ registered after login');
+
+    // Also register a global IM message listener to detect TUICall signaling
+    // messages that the FFI layer fails to forward (e.g., otherDeviceAccepted).
+    _initImSignalingListener();
+  }
+
+  /// Register a global IM message listener to intercept TUICall signaling
+  /// messages. The rtc_room_engine FFI layer has a bug where it doesn't
+  /// forward certain events (e.g., otherDeviceAccepted) to Flutter callbacks.
+  /// This listener monitors raw IM custom messages and detects call signaling.
+  void _initImSignalingListener() {
+    _imSignalingListener = V2TimAdvancedMsgListener(
+      onRecvNewMessage: _onImSignalingMessage,
+      onRecvC2CReadReceipt: (receiptList) {
+        debugPrint('[TRTC-IM-Signaling] onRecvC2CReadReceipt: ${receiptList.length} receipts');
+      },
+    );
+    TencentImSDKPlugin.v2TIMManager
+        .getMessageManager()
+        .addAdvancedMsgListener(listener: _imSignalingListener!);
+    debugPrint('[TRTC-IM-Signaling] ✅ global IM listener registered');
+  }
+
+  /// Handle incoming IM messages — look for TUICall signaling that indicates
+  /// another device accepted or rejected the call.
+  /// During debugging, logs ALL messages received while ringing to identify
+  /// the TUICall signaling format.
+  void _onImSignalingMessage(V2TimMessage message) {
+    final session = CallSessionManager.instance.current;
+    final isRinging = session.phase == CallPhase.incomingRinging;
+
+    // Log ALL message types during ringing to identify the signaling format.
+    if (isRinging) {
+      final msgType = message.elemType ?? 0;
+      String summary = 'elemType=$msgType';
+      if (message.customElem != null) {
+        final data = message.customElem!.data ?? '';
+        summary += ', customData=${data.substring(0, data.length.clamp(0, 200))}';
+      }
+      if (message.textElem != null) {
+        final text = message.textElem!.text ?? '';
+        summary += ', text=${text.substring(0, text.length.clamp(0, 100))}';
+      }
+      final cloudData = message.cloudCustomData;
+      if (cloudData != null && cloudData.isNotEmpty) {
+        summary += ', cloudCustomData=${cloudData.substring(0, cloudData.length.clamp(0, 200))}';
+      }
+      debugPrint('[TRTC-IM-Signaling] msg while ringing: msgID=${message.msgID ?? "?"}, $summary');
+    }
+
+    try {
+      final customData = message.customElem?.data;
+      if (customData == null || customData.isEmpty) return;
+
+      final data = jsonDecode(customData) as Map<String, dynamic>;
+      final businessID = data['businessID'] ?? data['businessId'] ?? '';
+      final action = data['action'] ?? '';
+      final callId = data['callId'] ?? data['callID'] ?? '';
+      final dataStr = data['data'] ?? '';
+
+      final isCallSignaling =
+          businessID.toString().contains('call') ||
+          action.toString().contains('call') ||
+          dataStr.toString().contains('accept') ||
+          dataStr.toString().contains('hangup');
+
+      if (!isCallSignaling) return;
+
+      debugPrint('[TRTC-IM-Signaling] call signaling detected: businessID=$businessID, action=$action, callId=$callId, data=$dataStr');
+
+      if (session.phase != CallPhase.incomingRinging) return;
+      if (callId.isNotEmpty && session.callId.isNotEmpty && callId != session.callId) return;
+
+      String? notificationMessage;
+      if (action.toString().contains('accept') ||
+          dataStr.toString().contains('accept') ||
+          dataStr.toString().contains('otherDevice')) {
+        notificationMessage = '通话已在其他设备接听';
+      } else if (action.toString().contains('hangup') ||
+          action.toString().contains('cancel') ||
+          dataStr.toString().contains('hangup') ||
+          dataStr.toString().contains('cancel')) {
+        notificationMessage = '对方已挂断通话';
+      }
+
+      if (notificationMessage == null) return;
+
+      final key = '$callId:$action';
+      if (_handledCallIds.contains(key)) return;
+      _handledCallIds.add(key);
+
+      debugPrint('[TRTC-IM-Signaling] >>> triggering dismiss for: $notificationMessage');
+      _notifyCall(notificationMessage);
+      CallSessionManager.instance.resetToIdle();
+      CustomCallNavigator.instance.dismissAllCallScreens();
+    } catch (e) {
+      // Not JSON or not a TUICall signaling message — ignore.
+    }
+  }
+
+  /// Common dismissal: clear session tracking for this callId.
+  void _dismissCall(String callId) {
+    final session = CallSessionManager.instance.current;
+    if (session.callId == callId) {
+      CallSessionManager.instance.resetToIdle();
+    }
   }
 
   void disposeCallObserver() {
@@ -247,6 +429,19 @@ class TUICallSessionService {
       _globalCallObserver = null;
       debugPrint('[TRTC-GlobalObserver] disposed');
     }
+    final imListener = _imSignalingListener;
+    if (imListener != null) {
+      try {
+        TencentImSDKPlugin.v2TIMManager
+            .getMessageManager()
+            .removeAdvancedMsgListener(listener: imListener);
+        debugPrint('[TRTC-IM-Signaling] IM listener disposed');
+      } catch (e) {
+        debugPrint('[TRTC-IM-Signaling] failed to dispose IM listener: $e');
+      }
+      _imSignalingListener = null;
+    }
+    _handledCallIds.clear();
   }
 
   /// The sdkAppId of the currently active IM session, or null if not logged in.
@@ -258,8 +453,72 @@ class TUICallSessionService {
   }
 
   String _resolveCallerName(String callerId) {
-    // Try to resolve from known names map, fallback to callerId.
+    // 1. Try ParticipantNameRegistry (preloaded from contacts API).
+    final registered = ParticipantNameRegistry.resolve(callerId);
+    if (registered.isNotEmpty) return registered;
+    // 2. Try CallStore participant info.
+    try {
+      final participants = CallStore.shared.state.allParticipants.value;
+      for (final p in participants) {
+        if (p.id == callerId) {
+          final name = p.remark.isNotEmpty ? p.remark : p.name;
+          if (name.isNotEmpty) return name;
+        }
+      }
+    } catch (_) {}
     return callerId;
+  }
+
+  /// Preload all contacts from the API into ParticipantNameRegistry,
+  /// so that incoming call display can resolve caller names by userId.
+  Future<void> _preloadContactNames(AppDependencies dependencies) async {
+    try {
+      final userResponse = await dependencies.apiClient.getJson(
+        AppConstants.userSimpleListPath,
+      );
+      final userCode = _asInt(userResponse['code']) ?? -1;
+      if (userCode != 0) return;
+
+      final userMaps = _asMapList(userResponse['data']);
+      var count = 0;
+      for (var i = 0; i < userMaps.length; i++) {
+        final item = userMaps[i];
+        final userId = _idText(item['id']);
+        if (userId == null || userId.isEmpty) continue;
+        final name = _asText(item['nickname']) ??
+            _asText(item['username']) ??
+            _asText(item['name']) ??
+            _asText(item['realName']);
+        if (name == null || name.isEmpty) continue;
+        ParticipantNameRegistry.register(userId, name);
+        count++;
+      }
+      debugPrint('[TRTC-Session] preloaded $count contact names into ParticipantNameRegistry');
+    } catch (e) {
+      debugPrint('[TRTC-Session] preload contact names failed: $e');
+    }
+  }
+
+  String? _idText(Object? value) {
+    if (value == null) return null;
+    final text = value.toString().trim();
+    return text.isEmpty || text == 'null' ? null : text;
+  }
+
+  List<Map<String, dynamic>> _asMapList(Object? value) {
+    if (value is! List) return const [];
+    return value
+        .whereType<Map>()
+        .map((item) =>
+            item.map((key, data) => MapEntry(key.toString(), data)))
+        .toList(growable: false);
+  }
+
+  int? _asInt(Object? value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value.trim());
+    return null;
   }
 
   void clearLocalSessionState() {
@@ -271,6 +530,7 @@ class TUICallSessionService {
     _activeSdkAppId = null;
     _activeUserSig = null;
     _activeUserSigFetchedAt = null;
+    CallSessionManager.instance.resetToIdle();
   }
 
   Future<void> warmupSessionAndPushInBackground({
@@ -278,8 +538,10 @@ class TUICallSessionService {
     int roomIdHint = 0,
     String? userIdHint,
   }) async {
+    debugPrint('[TRTC-DEBUG][Warmup] warmupSessionAndPushInBackground STARTED, userIdHint=$_maskSensitive(userIdHint)');
     final running = _ongoingWarmupTask;
     if (running != null) {
+      debugPrint('[TRTC-DEBUG][Warmup] warmupSessionAndPushInBackground EARLY RETURN: already running');
       await running;
       return;
     }
@@ -306,6 +568,7 @@ class TUICallSessionService {
     required String? userIdHint,
     required int epoch,
   }) async {
+    debugPrint('[TRTC-DEBUG][Warmup] _warmupSessionAndPushInBackgroundInternal STARTED, epoch=$epoch');
     final totalAttempts = _warmupRetryBackoffs.length;
     for (var index = 0; index < totalAttempts; index++) {
       if (_isEpochStale(epoch)) {
@@ -369,6 +632,7 @@ class TUICallSessionService {
     bool forceRefreshSig = false,
     String? userIdHint,
   }) async {
+    debugPrint('[TRTC-DEBUG][Warmup] ensureLoggedIn STARTED, userIdHint=$_maskSensitive(userIdHint)');
     final runningTask = _ongoingEnsureTask;
     if (runningTask != null) {
       return runningTask;
@@ -397,6 +661,7 @@ class TUICallSessionService {
     required bool forceRefreshSig,
     String? userIdHint,
   }) async {
+    debugPrint('[TRTC-DEBUG][Warmup] _ensureLoggedInInternal STARTED');
     final epoch = _sessionEpoch;
     String? currentUserId;
 
@@ -406,15 +671,18 @@ class TUICallSessionService {
       dependencies.logger.debug(
         '[PUSH-DEBUG] using userIdHint=${_maskSensitive(currentUserId)}',
       );
+      debugPrint('[TRTC-DEBUG][Warmup] Try1 userIdHint=${_maskSensitive(currentUserId)}');
     }
 
     // Try 2: extract from permission info
     if (currentUserId == null || currentUserId.isEmpty) {
+      debugPrint('[TRTC-DEBUG][Warmup] Try2 fetching permission info');
       Map<String, dynamic>? sessionInfo = await dependencies.authService
           .getCachedPermissionInfo();
       sessionInfo ??= await dependencies.authService
           .fetchPermissionInfoAndCache();
       currentUserId = _trtcService.extractCurrentUserId(sessionInfo)?.trim();
+      debugPrint('[TRTC-DEBUG][Warmup] Try2 result=${_maskSensitive(currentUserId)}');
       dependencies.logger.debug(
         '[PUSH-DEBUG] extractCurrentUserId result='
         '${_maskSensitive(currentUserId)}',
@@ -423,6 +691,7 @@ class TUICallSessionService {
 
     // Try 3: fallback to auth-based extraction
     if (currentUserId == null || currentUserId.isEmpty) {
+      debugPrint('[TRTC-DEBUG][Warmup] Try3 fallback _tryGetUserIdFromAuth');
       dependencies.logger.debug(
         '[PUSH-DEBUG] falling back to _tryGetUserIdFromAuth',
       );
@@ -430,12 +699,15 @@ class TUICallSessionService {
       dependencies.logger.debug(
         '[PUSH-DEBUG] fallbackUserId=${_maskSensitive(currentUserId)}',
       );
+      debugPrint('[TRTC-DEBUG][Warmup] Try3 result=${_maskSensitive(currentUserId)}');
     }
 
     if (currentUserId == null || currentUserId.isEmpty) {
+      debugPrint('[TRTC-DEBUG][Warmup] FAIL: no userId found');
       return const TUICallSessionState.failure('未获取到当前登录用户ID');
     }
 
+    debugPrint('[TRTC-DEBUG][Warmup] proceeding to _loginWithUserId');
     return _loginWithUserId(
       dependencies: dependencies,
       userId: currentUserId,
@@ -468,15 +740,12 @@ class TUICallSessionService {
         '';
     final roomId = roomIdHint > 0 ? roomIdHint : generateRoomId();
 
-    // Avoid re-entering the IM login path for the same in-memory user session.
-    // Repeated logout->login for the same account may trigger SDK internal
-    // send-port lock contention on some devices.
-    if (!forceRefreshSig && _activeUserId == currentUserId) {
-      return TUICallSessionState.success(
-        userId: currentUserId,
-        nickname: nickname,
-      );
-    }
+    // TUICallKit.login() internally calls TUICallEngine.init(), which must be
+    // called on every ensureLoggedIn invocation. Skipping it causes
+    // "TUICallEngine is not initialized" errors. The SDK handles "already
+    // login" gracefully, so repeated calls are safe.
+    // The only case we skip is when the user is switching accounts — we reset
+    // markers above to avoid native logout contention.
 
     TrtcUserSigInfo userSigInfo;
     var canReuseActiveSig =
@@ -551,24 +820,58 @@ class TUICallSessionService {
         _activeUserSigFetchedAt = null;
       }
 
-      final callKitLoginResult = await TUICallKit.instance
-          .login(userSigInfo.sdkAppId, userSigInfo.userId, userSigInfo.userSig)
+      dependencies.logger.debug(
+        '[TRTC] >>> TUIRoomEngine.login starting for userId=${_maskSensitive(userSigInfo.userId)} sdkAppId=${userSigInfo.sdkAppId}',
+      );
+      debugPrint('[TRTC-DEBUG][Warmup] >>> TUIRoomEngine.login starting');
+      final roomLoginResult = await rtc.TUIRoomEngine.login(
+        userSigInfo.sdkAppId,
+        userSigInfo.userId,
+        userSigInfo.userSig,
+      ).timeout(const Duration(seconds: 15));
+      if (_isEpochStale(epoch)) {
+        return const TUICallSessionState.failure('SESSION_CANCELLED');
+      }
+      debugPrint('[TRTC-DEBUG][Warmup] <<< TUIRoomEngine.login: code=${roomLoginResult.code} message=${roomLoginResult.message}');
+      dependencies.logger.debug(
+        '[TRTC] <<< TUIRoomEngine.login: code=${roomLoginResult.code} message=${roomLoginResult.message}',
+      );
+
+      dependencies.logger.debug(
+        '[TRTC] >>> TUICallEngine.init starting for userId=${_maskSensitive(userSigInfo.userId)} sdkAppId=${userSigInfo.sdkAppId}',
+      );
+      final callKitLoginResult = await rtc.TUICallEngine.instance
+          .init(userSigInfo.sdkAppId, userSigInfo.userId, userSigInfo.userSig)
           .timeout(const Duration(seconds: 15));
       if (_isEpochStale(epoch)) {
         return const TUICallSessionState.failure('SESSION_CANCELLED');
       }
 
-      final callKitReady =
-          callKitLoginResult.isSuccess ||
-          _looksAlreadyLoggedIn(
-            callKitLoginResult.errorCode,
-            callKitLoginResult.errorMessage,
-          );
+      // rtc_room_engine uses TUIError enum, success means init OK.
+      final callKitReady = callKitLoginResult.code == rtc.TUIError.success;
+      debugPrint('[TRTC-DEBUG][Warmup] <<< TUICallEngine.init: code=${callKitLoginResult.code} ready=$callKitReady');
       if (!callKitReady) {
         return TUICallSessionState.failure(
-          '音视频登录失败: ${callKitLoginResult.errorMessage ?? "未知错误"}',
+          '音视频初始化失败: ${callKitLoginResult.message ?? "未知错误"}',
         );
       }
+
+      // Enable multi-device call notification so that when the same user
+      // logs in on multiple devices (PC + mobile), all devices receive
+      // incoming calls and auto-dismiss when one device answers/hangs up.
+      // TEMPORARILY DISABLED for debugging callee accept issue.
+      debugPrint('[TRTC-DEBUG][Warmup] >>> enabling multi-device ability (DISABLED FOR TESTING)');
+      // final multiDeviceResult = await rtc.TUICallEngine.instance
+      //     .enableMultiDeviceAbility(true)
+      //     .timeout(const Duration(seconds: 10));
+      // debugPrint('[TRTC-DEBUG][Warmup] <<< enableMultiDeviceAbility: code=${multiDeviceResult.code} message=${multiDeviceResult.message}');
+
+      dependencies.logger.debug(
+        '[TRTC] <<< TUICallEngine.init completed: code=${callKitLoginResult.code} message=${callKitLoginResult.message}',
+      );
+
+      // Ensure native engine state is fully established before making calls.
+      await Future<void>.delayed(const Duration(seconds: 2));
 
       // Do not mirror-login via the extra native channel here.
       // TUICallKit login already establishes IM session; duplicate native login
@@ -590,14 +893,19 @@ class TUICallSessionService {
         );
       }
 
-      final selfInfoReady = await _setSelfInfoWithRetry(
-        dependencies: dependencies,
-        nickname: nickname,
-        avatar: avatar,
+      // Set self info is best-effort — TUICallKit.setSelfInfo has a known null
+      // check bug (TUICallKitImpl line 118) that crashes on empty avatar.
+      // Call continues to work even without it.
+      unawaited(
+        _setSelfInfoWithRetryDebug(
+          dependencies: dependencies,
+          nickname: nickname,
+          avatar: avatar,
+        ),
       );
-      if (!selfInfoReady) {
-        return const TUICallSessionState.failure('音视频用户资料初始化失败，请稍后重试');
-      }
+
+      // Preload contact names for incoming call display resolution.
+      unawaited(_preloadContactNames(dependencies));
 
       // Disabled: using custom Flutter UI instead of TUICallKit native UI.
       // try {
@@ -649,10 +957,18 @@ class TUICallSessionService {
   }
 
   Future<void> logoutSilently({AppDependencies? dependencies}) async {
-    // IMPORTANT:
-    // Do not call TUICallKit.logout() during app logout/login transitions.
-    // Native IM SDK logout can contend with concurrent login/warmup and cause
-    // UI-thread stalls (ANR) on some devices.
+    // Dispose call observer (removes TUICallObserver and IM listener)
+    disposeCallObserver();
+
+    // Uninitialize TUICallEngine so native SDK goes offline
+    // and stops receiving incoming call notifications.
+    try {
+      await rtc.TUICallEngine.instance.unInit().timeout(const Duration(seconds: 5));
+      debugPrint('[TRTC-DEBUG][Logout] TUICallEngine.unInit success');
+    } catch (e) {
+      debugPrint('[TRTC-DEBUG][Logout] TUICallEngine.unInit failed: $e');
+    }
+
     clearLocalSessionState();
     await Future<void>.value();
   }
@@ -678,6 +994,20 @@ class TUICallSessionService {
     }
     return DateTime.now().difference(fetchedAt) <= _activeSigReuseWindow;
   }
+
+  /// Quick check if session is already warm (cached signature is valid and recent).
+  /// Use this to skip loading overlays when the session is already initialized.
+  bool get isSessionWarm {
+    return _activeUserId != null &&
+        _activeUserId!.isNotEmpty &&
+        (_activeUserSig?.isNotEmpty ?? false) &&
+        (_activeSdkAppId ?? 0) > 0 &&
+        _isWithinReuseWindow(_activeUserSigFetchedAt);
+  }
+
+  /// Current active user ID from TRTC session.
+  /// Returns empty string if not logged in.
+  String get activeUserId => _activeUserId ?? '';
 
   bool _isEpochStale(int epoch) => epoch != _sessionEpoch;
 
@@ -709,7 +1039,7 @@ class TUICallSessionService {
     }
   }
 
-  Future<bool> _setSelfInfoWithRetry({
+  Future<bool> _setSelfInfoWithRetryDebug({
     required AppDependencies dependencies,
     required String nickname,
     required String avatar,
@@ -717,18 +1047,21 @@ class TUICallSessionService {
     const maxAttempts = 5;
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        final selfInfoResult = await TUICallKit.instance.setSelfInfo(
+        debugPrint('[TRTC-DEBUG][Warmup] setSelfInfo attempt $attempt/$maxAttempts');
+        final selfInfoResult = await rtc.TUICallEngine.instance.setSelfInfo(
           nickname,
           avatar,
         );
-        if (selfInfoResult.isSuccess) {
+        debugPrint('[TRTC-DEBUG][Warmup] setSelfInfo result: code=${selfInfoResult.code} msg=${selfInfoResult.message}');
+        if (selfInfoResult.code == rtc.TUIError.success) {
+          debugPrint('[TRTC-DEBUG][Warmup] setSelfInfo SUCCESS');
           return true;
         }
         dependencies.logger.error(
           'set TUICall self info failed: '
           'attempt=$attempt/$maxAttempts, '
-          'code=${selfInfoResult.errorCode}, '
-          'message=${selfInfoResult.errorMessage}',
+          'code=${selfInfoResult.code}, '
+          'message=${selfInfoResult.message}',
         );
       } catch (error, stackTrace) {
         dependencies.logger.error(
@@ -855,17 +1188,6 @@ class TUICallSessionService {
       }
     }
     return null;
-  }
-
-  bool _looksAlreadyLoggedIn(int? code, String? message) {
-    final normalized = (message ?? '').toLowerCase();
-    final byCode = code == 6013 || code == 6208 || code == 6206;
-    final byText =
-        normalized.contains('already login') ||
-        normalized.contains('already logged') ||
-        normalized.contains('has login') ||
-        normalized.contains('repeated login');
-    return byCode || byText;
   }
 
   Map<String, dynamic>? _asMap(Object? value) {

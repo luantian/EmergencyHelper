@@ -18,9 +18,87 @@ import com.tencent.qcloud.tim.push.TIMPushManager
 import com.tencent.qcloud.tim.push.TIMPushMessage
 import com.tencent.qcloud.tuicore.TUIConstants
 import com.tencent.qcloud.tuicore.TUICore
+import com.tencent.cloud.tuikit.engine.call.TUICallEngine
+import com.tencent.cloud.tuikit.engine.call.TUICallObserver
+import com.tencent.cloud.tuikit.engine.call.TUICallDefine
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.embedding.engine.dart.DartExecutor
+
+/**
+ * Tracks TUICallEngine call state via a native observer.
+ * This bypasses the FFI bug where onCallNotConnected/onCallEnd aren't
+ * forwarded for otherDeviceAccepted events.
+ */
+object CallStateTracker : TUICallObserver() {
+    @Volatile var currentCallId: String? = null
+    @Volatile var callState: String = "idle" // idle | incomingRinging | inCall
+    @Volatile var registered = false
+
+    override fun onCallReceived(
+        callId: String,
+        userId: String,
+        calleeList: List<String>,
+        mediaType: TUICallDefine.MediaType,
+        extraInfo: TUICallDefine.CallObserverExtraInfo
+    ) {
+        currentCallId = callId
+        callState = "incomingRinging"
+        Log.d("CallStateTracker", "onCallReceived callId=$callId")
+    }
+
+    override fun onCallBegin(
+        callId: String,
+        mediaType: TUICallDefine.MediaType,
+        extraInfo: TUICallDefine.CallObserverExtraInfo
+    ) {
+        callState = "inCall"
+        Log.d("CallStateTracker", "onCallBegin callId=$callId")
+    }
+
+    override fun onCallEnd(
+        callId: String,
+        mediaType: TUICallDefine.MediaType,
+        reason: TUICallDefine.CallEndReason,
+        userId: String,
+        totalTime: Long,
+        extraInfo: TUICallDefine.CallObserverExtraInfo
+    ) {
+        Log.d("CallStateTracker", "onCallEnd callId=$callId reason=$reason")
+        currentCallId = null
+        callState = "idle"
+    }
+
+    override fun onCallNotConnected(
+        callId: String,
+        mediaType: TUICallDefine.MediaType,
+        reason: TUICallDefine.CallEndReason,
+        userId: String,
+        extraInfo: TUICallDefine.CallObserverExtraInfo
+    ) {
+        Log.d("CallStateTracker", "onCallNotConnected callId=$callId reason=$reason")
+        currentCallId = null
+        callState = "idle"
+    }
+
+    override fun onCallCancelled(callId: String) {
+        Log.d("CallStateTracker", "onCallCancelled callId=$callId")
+        currentCallId = null
+        callState = "idle"
+    }
+
+    fun register(context: android.content.Context) {
+        if (registered) return
+        try {
+            val engine = TUICallEngine.createInstance(context.applicationContext)
+            engine.addObserver(this)
+            registered = true
+            Log.d("CallStateTracker", "Native TUICallObserver registered on engine=$engine")
+        } catch (e: Exception) {
+            Log.e("CallStateTracker", "Failed to register native observer", e)
+        }
+    }
+}
 
 class MainApplication : BmfMapApplication() {
 
@@ -61,6 +139,7 @@ class MainApplication : BmfMapApplication() {
 
         if (isMainProcess()) {
             initTIMPushHooksSafe()
+            CallStateTracker.register(this)
         }
     }
 

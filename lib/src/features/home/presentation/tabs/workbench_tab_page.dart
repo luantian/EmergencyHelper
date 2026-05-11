@@ -503,20 +503,22 @@ class _WarningCardState extends State<_WarningCard> {
   }
 
   Color _backendWarningColor(String level) {
-    final raw = level.toLowerCase();
-    if (raw.contains('red') || raw.contains('红')) return const Color(0xFFE55B5B);
-    if (raw.contains('orange') || raw.contains('橙')) return const Color(0xFFE49A2D);
-    if (raw.contains('yellow') || raw.contains('黄')) return const Color(0xFFF6B434);
-    if (raw.contains('blue') || raw.contains('蓝')) return const Color(0xFF4B81CD);
+    final raw = level.trim().toLowerCase();
+    // Support numeric levels: 1=red, 2=orange, 3=yellow, 4=blue
+    if (raw == '1' || raw.contains('red') || raw.contains('红')) return const Color(0xFFE55B5B);
+    if (raw == '2' || raw.contains('orange') || raw.contains('橙')) return const Color(0xFFE49A2D);
+    if (raw == '3' || raw.contains('yellow') || raw.contains('黄')) return const Color(0xFFF6B434);
+    if (raw == '4' || raw.contains('blue') || raw.contains('蓝')) return const Color(0xFF4B81CD);
     return const Color(0xFF7E8DA2);
   }
 
   Color _backendWarningCardColor(String level) {
-    final raw = level.toLowerCase();
-    if (raw.contains('red') || raw.contains('红')) return const Color(0xFFF8D8D8);
-    if (raw.contains('orange') || raw.contains('橙')) return const Color(0xFFFBE2C1);
-    if (raw.contains('yellow') || raw.contains('黄')) return const Color(0xFFEEC0C0);
-    if (raw.contains('blue') || raw.contains('蓝')) return const Color(0xFFDCEAFD);
+    final raw = level.trim().toLowerCase();
+    // Support numeric levels: 1=red, 2=orange, 3=yellow, 4=blue
+    if (raw == '1' || raw.contains('red') || raw.contains('红')) return const Color(0xFFF8D8D8);
+    if (raw == '2' || raw.contains('orange') || raw.contains('橙')) return const Color(0xFFFBE2C1);
+    if (raw == '3' || raw.contains('yellow') || raw.contains('黄')) return const Color(0xFFEEC0C0);
+    if (raw == '4' || raw.contains('blue') || raw.contains('蓝')) return const Color(0xFFDCEAFD);
     return const Color(0xFFE7EDF4);
   }
 
@@ -550,7 +552,9 @@ class _WarningCardState extends State<_WarningCard> {
           );
         }
 
-        return Container(
+        return GestureDetector(
+          onTap: () => context.push(RoutePaths.weatherWarningList),
+          child: Container(
           decoration: BoxDecoration(
             color: warningData.cardColor,
             borderRadius: BorderRadius.circular(AppTheme.radiusMd),
@@ -598,6 +602,7 @@ class _WarningCardState extends State<_WarningCard> {
               ),
             ],
           ),
+        ),
         );
       },
     );
@@ -631,11 +636,14 @@ class _WarningIcon extends StatelessWidget {
       ),
       alignment: Alignment.center,
       child: hasAsset
-          ? Image.asset(
-              normalizedIconAsset,
-              width: 28,
-              height: 28,
-              fit: BoxFit.contain,
+          ? ColorFiltered(
+              colorFilter: ColorFilter.mode(backgroundColor, BlendMode.srcIn),
+              child: Image.asset(
+                normalizedIconAsset,
+                width: 28,
+                height: 28,
+                fit: BoxFit.contain,
+              ),
             )
           : Text(
               label,

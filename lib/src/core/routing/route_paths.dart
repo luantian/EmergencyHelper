@@ -17,6 +17,7 @@ class RoutePaths {
   static const String riskFeedback = '/risk-feedback/:riskId';
   static const String keyPoint = '/key-point';
   static const String weatherInfo = '/weather-info';
+  static const String weatherWarningList = '/weather-warning-list';
   static const String statistics = '/statistics';
   static const String changePassword = '/change-password';
   static const String about = '/about';

@@ -102,6 +102,11 @@ class _DeviceStoreImpl implements DeviceStore {
   }
 
   @override
+  void updateCameraStatus(bool isOpen, {bool isFront = true}) {
+    deviceStoreImpl.updateCameraStatus(isOpen, isFront: isFront);
+  }
+
+  @override
   void closeLocalCamera() {
     deviceStoreImpl.closeLocalCamera();
   }
@@ -160,31 +165,69 @@ class _CallDeviceStoreImpl extends _DeviceStore {
 
   @override
   void closeLocalCamera() {
+    debugPrint('[TRTC-DEBUG][CallDeviceStore] closeLocalCamera');
     TUICallEngine.instance.closeCamera();
     deviceState._cameraStatus.value = DeviceStatus.off;
   }
 
   @override
   void switchCamera(bool isFront) {
-    TUICallEngine.instance.switchCamera(isFront ? TUICamera.front : TUICamera.back);
+    debugPrint('[TRTC-DEBUG][CallDeviceStore] switchCamera: isFront=$isFront');
     deviceState._isFrontCamera.value = isFront;
+    // Note: SDK mapping is inverted - TUICamera.back opens front, TUICamera.front opens back.
+    final camera = isFront ? TUICamera.back : TUICamera.front;
+    final viewId = localCallViewId;
+    if (viewId != null && viewId != 0) {
+      // Re-bind camera to current view to avoid dark screen after switch.
+      TUICallEngine.instance.openCamera(camera, viewId);
+    } else {
+      TUICallEngine.instance.switchCamera(camera);
+    }
   }
 
   @override
   void closeLocalMicrophone() {
+    debugPrint('[TRTC-DEBUG][CallDeviceStore] closeLocalMicrophone');
     TUICallEngine.instance.closeMicrophone();
     deviceState._microphoneStatus.value = DeviceStatus.off;
   }
 
   @override
   Future<CompletionHandler> openLocalCamera(bool isFront) {
-    TUICallEngine.instance.callExperimentalAPI({
-      'api': 'openCamera',
-      'params': {'isFront': isFront},
-    });
-    deviceState._cameraStatus.value = DeviceStatus.on;
+    debugPrint('[TRTC-DEBUG][CallDeviceStore] openLocalCamera: isFront=$isFront localViewId=$localCallViewId');
+    // Note: SDK mapping is inverted - TUICamera.back opens front, TUICamera.front opens back.
+    final camera = isFront ? TUICamera.back : TUICamera.front;
+    final viewId = localCallViewId;
+    if (viewId == null || viewId == 0) {
+      debugPrint('[TRTC-DEBUG][CallDeviceStore] openLocalCamera FAILED: localViewId is null/zero, fallback to state-only + switchCamera');
+      deviceState._isFrontCamera.value = isFront;
+      TUICallEngine.instance.switchCamera(camera);
+      deviceState._cameraStatus.value = DeviceStatus.on;
+      final handler = CompletionHandler();
+      handler.errorCode = DeviceError.unknownError.value;
+      handler.errorMessage = 'localViewId not available';
+      return Future.value(handler);
+    }
     deviceState._isFrontCamera.value = isFront;
-    return Future.value(CompletionHandler());
+    return TUICallEngine.instance.openCamera(
+      camera,
+      viewId,
+    ).then((result) {
+      CompletionHandler completionHandler = CompletionHandler();
+      DeviceError deviceError = _TypeConvert._deviceErrorFromEngineError(result.code);
+      deviceState._cameraLastError.value = deviceError;
+      deviceState._cameraStatus.value = deviceError == DeviceError.noError ? DeviceStatus.on : DeviceStatus.off;
+      completionHandler.errorCode = result.code.rawValue;
+      completionHandler.errorMessage = result.message;
+      debugPrint('[TRTC-DEBUG][CallDeviceStore] openLocalCamera result: code=${result.code.rawValue} msg=${result.message}');
+      return completionHandler;
+    });
+  }
+
+  @override
+  void updateCameraStatus(bool isOpen, {bool isFront = true}) {
+    deviceState._cameraStatus.value = isOpen ? DeviceStatus.on : DeviceStatus.off;
+    deviceState._isFrontCamera.value = isFront;
   }
 
   @override
@@ -318,6 +361,12 @@ class _LiveAndRoomDeviceStoreImpl extends _DeviceStore {
   }
 
   @override
+  void updateCameraStatus(bool isOpen, {bool isFront = true}) {
+    deviceState._cameraStatus.value = isOpen ? DeviceStatus.on : DeviceStatus.off;
+    deviceState._isFrontCamera.value = isFront;
+  }
+
+  @override
   Future<CompletionHandler> openLocalMicrophone() {
     _log.info('API openLocalMicrophone');
     return roomEngine.openLocalMicrophone(TUIAudioQuality.audioProfileDefault).then((result) {
@@ -444,6 +493,9 @@ class _DeviceStore implements DeviceStore {
     completionHandler.errorMessage = 'focus owner is unknown';
     return Future.value(completionHandler);
   }
+
+  @override
+  void updateCameraStatus(bool isOpen, {bool isFront = true}) {}
 
   @override
   Future<CompletionHandler> openLocalMicrophone() {

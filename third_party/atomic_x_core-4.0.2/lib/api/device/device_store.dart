@@ -12,6 +12,15 @@ import '../../impl/common/log.dart';
 
 part '../../impl/device/device_store_impl.dart';
 
+/// Stores the native view ID of the local VideoView for use by openLocalCamera.
+/// Set by CallParticipantView.onViewCreated when the local view is created.
+int? localCallViewId;
+
+/// Sets the local call view ID.
+void setLocalCallViewId(int viewId) {
+  localCallViewId = viewId;
+}
+
 /// Device type
 ///
 /// This enum defines the available device types.
@@ -431,6 +440,11 @@ abstract class DeviceStore {
   /// - [isFront] : Whether front camera
   /// - [completion] : Whether operation succeeded
   Future<CompletionHandler> openLocalCamera(bool isFront);
+
+  /// Update camera status in DeviceStore without calling native SDK.
+  /// Used when camera is opened/closed by the SDK directly (e.g. via
+  /// TUICallEngine.openCamera from CallParticipantView).
+  void updateCameraStatus(bool isOpen, {bool isFront = true});
 
   /// Close local camera
   void closeLocalCamera();

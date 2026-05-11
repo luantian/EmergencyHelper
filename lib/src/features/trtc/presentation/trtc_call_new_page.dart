@@ -1,15 +1,24 @@
-﻿import 'dart:convert';
+﻿import 'dart:async';
+import 'dart:convert';
 
+import 'package:atomic_x_core/atomicxcore.dart';
 import 'package:emergency_helper/src/core/di/app_dependencies.dart';
+import 'package:emergency_helper/src/core/routing/route_paths.dart';
 import 'package:emergency_helper/src/core/theme/app_theme.dart';
 import 'package:emergency_helper/src/core/widgets/app_center_toast.dart';
 import 'package:emergency_helper/src/core/widgets/app_loading_overlay.dart';
 import 'package:emergency_helper/src/features/event/presentation/event_transfer_picker_page.dart';
+import 'package:emergency_helper/src/features/trtc/data/call_phase.dart';
+import 'package:emergency_helper/src/features/trtc/data/custom_call_navigator.dart';
+import 'package:emergency_helper/src/features/trtc/data/participant_name_registry.dart';
 import 'package:emergency_helper/src/features/trtc/data/tuicall_session_service.dart';
 import 'package:emergency_helper/src/features/trtc/presentation/trtc_call_route_extra.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
-import 'package:tencent_calls_uikit/tencent_calls_uikit.dart' as tui;
+import 'package:rtc_room_engine/rtc_room_engine.dart' as rtc;
 
 class TrtcCallNewPage extends StatefulWidget {
   const TrtcCallNewPage({super.key, this.routeExtra});
@@ -49,7 +58,7 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
   }
 
   void _onCallNotification(String message) {
-    debugPrint('[TRTC-Page] call notification: $message');
+    debugPrint('[TRTC-DEBUG][Page] call notification: $message');
     _showMessage(message);
   }
 
@@ -296,15 +305,21 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
   }
 
   void _startVideoCall() {
-    _startCall(tui.CallMediaType.video);
+    _startCall(CallMediaType.video);
   }
 
   void _startAudioCall() {
-    _startCall(tui.CallMediaType.audio);
+    _startCall(CallMediaType.audio);
   }
 
-  String _mediaTypeLabel(tui.CallMediaType mediaType) {
-    return mediaType == tui.CallMediaType.video ? '视频' : '语音';
+  String _mediaTypeLabel(CallMediaType mediaType) {
+    return mediaType == CallMediaType.video ? '视频' : '语音';
+  }
+
+  rtc.TUICallMediaType _toRTCMediaType(CallMediaType mediaType) {
+    return mediaType == CallMediaType.video
+        ? rtc.TUICallMediaType.video
+        : rtc.TUICallMediaType.audio;
   }
 
   Future<void> _bootstrap() async {
@@ -313,6 +328,13 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
   }
 
   Future<void> _ensureCallSession({bool forceRefreshSig = false}) async {
+    // Skip loading overlay if session is already warm (from login-time warmup).
+    if (_sessionService.isSessionWarm && !forceRefreshSig) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      return;
+    }
+
     final dependencies = context.read<AppDependencies>();
     final result = await _sessionService.ensureLoggedIn(
       dependencies: dependencies,
@@ -354,8 +376,8 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
       return;
     }
 
-    // Track incoming call for multi-device sync detection.
-    _sessionService.markIncomingCall(callId);
+    // Track session for auto-join flow.
+    CallSessionManager.instance.markConnecting(callId: callId);
 
     if (!mounted) {
       return;
@@ -385,8 +407,8 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
         _showMessage(message);
         return;
       }
-      _sessionService.markLocalUserAnswered();
-      await tui.TUICallKit.instance.join(callId);
+      CallSessionManager.instance.markConnecting(callId: callId);
+      await rtc.TUICallEngine.instance.join(callId);
     } catch (error) {
       Object resolvedError = error;
       if (_shouldRetryWithSigRefresh(error: error)) {
@@ -400,8 +422,8 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
         );
         if (refreshed.success) {
           try {
-            _sessionService.markLocalUserAnswered();
-            await tui.TUICallKit.instance.join(callId);
+            CallSessionManager.instance.markConnecting(callId: callId);
+            await rtc.TUICallEngine.instance.join(callId);
             return;
           } catch (retryError) {
             resolvedError = retryError;
@@ -478,37 +500,66 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
     });
   }
 
-  Future<void> _startCall(tui.CallMediaType mediaType) async {
+  Future<void> _startCall(CallMediaType mediaType) async {
     if (_submitting) {
+      debugPrint('[TRTC-DEBUG][Page] _startCall blocked: already submitting');
       return;
     }
     if (_invitees.isEmpty) {
+      debugPrint('[TRTC-DEBUG][Page] _startCall blocked: no invitees');
       _showMessage('请先选择通话成员');
       return;
     }
 
+    // Request runtime permissions for camera and microphone.
+    debugPrint('[TRTC-DEBUG][Page] step0: requesting camera/microphone permissions');
+    if (mediaType == CallMediaType.video) {
+      final cameraStatus = await Permission.camera.request();
+      final micStatus = await Permission.microphone.request();
+      if (!cameraStatus.isGranted || !micStatus.isGranted) {
+        debugPrint('[TRTC-DEBUG][Page] step0: permission denied camera=$cameraStatus mic=$micStatus');
+        _showMessage('需要摄像头和麦克风权限才能进行通话');
+        return;
+      }
+      debugPrint('[TRTC-DEBUG][Page] step0: permissions granted');
+    } else {
+      final micStatus = await Permission.microphone.request();
+      if (!micStatus.isGranted) {
+        debugPrint('[TRTC-DEBUG][Page] step0: microphone permission denied');
+        _showMessage('需要麦克风权限才能进行通话');
+        return;
+      }
+      debugPrint('[TRTC-DEBUG][Page] step0: microphone permission granted');
+    }
+
     final mediaTypeText = _mediaTypeLabel(mediaType);
+    debugPrint('[TRTC-DEBUG][Page] >>> _startCall BEGIN mediaType=$mediaTypeText invitees=${_invitees.map((e) => e.userId).join(",")}');
     setState(() {
       _submitting = true;
     });
 
     try {
       final dependencies = context.read<AppDependencies>();
+      debugPrint('[TRTC-DEBUG][Page] step1: calling ensureLoggedIn...');
       final sessionReady = await _sessionService.ensureLoggedIn(
         dependencies: dependencies,
         roomIdHint: TUICallSessionService.generateRoomId(),
       );
+      debugPrint('[TRTC-DEBUG][Page] step1 done: ensureLoggedIn success=${sessionReady.success} userId=${sessionReady.userId} nickname=${sessionReady.nickname}');
       if (!sessionReady.success) {
+        debugPrint('[TRTC-DEBUG][Page] step1 FAILED: ${sessionReady.message}');
         _showMessage(sessionReady.message.isEmpty ? '通话会话初始化失败' : _friendlyError(sessionReady.message));
         return;
       }
 
       final selfUserId = (sessionReady.userId ?? '').trim();
+      debugPrint('[TRTC-DEBUG][Page] step2: selfUserId=$selfUserId');
       final targetIds = _invitees
           .map((item) => item.userId.trim())
           .where((item) => item.isNotEmpty && item != selfUserId)
           .toSet()
           .toList(growable: false);
+      debugPrint('[TRTC-DEBUG][Page] step2: targetIds after dedup=${targetIds.join(",")}');
       final callerName = (sessionReady.nickname ?? '').trim();
       final inviteeById = <String, _Invitee>{};
       for (final invitee in _invitees) {
@@ -523,22 +574,19 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
           .where((name) => name.isNotEmpty)
           .toList(growable: false);
       if (targetIds.isEmpty) {
+        debugPrint('[TRTC-DEBUG][Page] step2 blocked: no valid targets');
         _showMessage('目标成员不能仅为自己，请重新选择');
         return;
       }
 
-      debugPrint(
-        '[TRTC] startCall tapped mediaType=$mediaTypeText '
-        'targets=${targetIds.join(",")}',
-      );
-
+      debugPrint('[TRTC-DEBUG][Page] step3: calling _preloadUserInfo...');
       await _preloadUserInfo(targetIds);
 
       final callUserData = <String, dynamic>{
         'source': 'emergency_helper',
         'page': 'trtc_call',
         'type': 'call_invite',
-        'mediaType': mediaType == tui.CallMediaType.video ? 'video' : 'audio',
+        'mediaType': mediaType == CallMediaType.video ? 'video' : 'audio',
         'callerId': selfUserId,
         'autoJoin': 1,
         'autoEnter': 1,
@@ -552,61 +600,89 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
       if (targetNames.isNotEmpty) {
         callUserData['calleeNames'] = targetNames.join(',');
       }
-      final callParams = tui.CallParams(userData: jsonEncode(callUserData));
-      debugPrint('[TRTC] call userData=${callParams.userData}');
+      final rtcCallParams = rtc.TUICallParams()..userData = jsonEncode(callUserData);
+      debugPrint('[TRTC-DEBUG][Page] step4: callParams.userData=${rtcCallParams.userData}');
 
-      var result = await tui.TUICallKit.instance.calls(
+      debugPrint('[TRTC-DEBUG][Page] step5: calling TUICallEngine.calls(targets=${targetIds.join(",")}, mediaType=$mediaTypeText)');
+      var result = await rtc.TUICallEngine.instance.calls(
         targetIds,
-        mediaType,
-        callParams,
+        _toRTCMediaType(mediaType),
+        rtcCallParams,
       );
 
-      debugPrint(
-        '[TRTC] calls result mediaType=$mediaTypeText '
-        'success=${result.isSuccess} code=${result.errorCode} '
-        'message=${result.errorMessage}',
-      );
+      debugPrint('[TRTC-DEBUG][Page] step5: calls result success=${result.code == rtc.TUIError.success} code=${result.code.rawValue} message=${result.message}');
 
-      if (!result.isSuccess &&
+      if (result.code != rtc.TUIError.success &&
           _shouldRetryWithSigRefresh(
-            errorCode: result.errorCode,
-            errorMessage: result.errorMessage,
+            errorCode: result.code.rawValue,
+            errorMessage: result.message,
           )) {
-        debugPrint(
-          '[TRTC] calls retry with refreshed userSig '
-          'code=${result.errorCode}, message=${result.errorMessage}',
-        );
+        debugPrint('[TRTC-DEBUG][Page] step5: retry with forceRefreshSig');
         final refreshed = await _sessionService.ensureLoggedIn(
           dependencies: dependencies,
           roomIdHint: TUICallSessionService.generateRoomId(),
           forceRefreshSig: true,
         );
         if (refreshed.success) {
-          result = await tui.TUICallKit.instance.calls(
+          debugPrint('[TRTC-DEBUG][Page] step5: retrying calls...');
+          result = await rtc.TUICallEngine.instance.calls(
             targetIds,
-            mediaType,
-            callParams,
+            _toRTCMediaType(mediaType),
+            rtcCallParams,
           );
-          debugPrint(
-            '[TRTC] calls retry result mediaType=$mediaTypeText '
-            'success=${result.isSuccess} code=${result.errorCode} '
-            'message=${result.errorMessage}',
-          );
+          debugPrint('[TRTC-DEBUG][Page] step5: retry result success=${result.code == rtc.TUIError.success} code=${result.code.rawValue} message=${result.message}');
         } else {
+          debugPrint('[TRTC-DEBUG][Page] step5: refresh session FAILED: ${refreshed.message}');
           _showMessage(refreshed.message.isEmpty ? '通话会话初始化失败' : _friendlyError(refreshed.message));
           return;
         }
       }
 
-      if (!result.isSuccess && mounted) {
-        _showMessage(_friendlyError('发起$mediaTypeText通话失败: ${result.errorMessage ?? ""}'));
+      if (result.code == rtc.TUIError.success) {
+        debugPrint('[TRTC-DEBUG][Page] step6: calls SUCCESS');
+
+        // Track outgoing call phase for multi-device sync.
+        final mediaTypeValue = mediaType == CallMediaType.video ? 'video' : 'audio';
+        CallSessionManager.instance.markOutgoingCall(
+          callId: '',
+          mediaType: mediaTypeValue,
+          inviterId: selfUserId,
+          inviteeIds: targetIds,
+        );
+
+        // Manually populate CallStore state for the caller side.
+        // The SDK observer only fires onCallBegin for the callee,
+        // so the caller's selfInfo and activeCall remain empty
+        // unless we populate them here.
+        final callerName = (sessionReady.nickname ?? '').trim();
+        debugPrint('[TRTC-DEBUG][Page] step6: populating CallStore caller state for selfUserId=$selfUserId');
+        CallStore.shared.populateCallerState(selfUserId, callerName, targetIds, mediaType);
+
+        // Navigate to in-call page immediately so user can see the waiting state
+        // and has access to the hangup button while waiting for answer.
+        if (mounted) {
+          debugPrint('[TRTC-DEBUG][Page] step7: navigating to InCallPage via CustomCallNavigator');
+          CustomCallNavigator.instance.navigateToInCall(
+            callId: '',
+            mediaType: mediaTypeValue,
+            selfUserId: selfUserId,
+          );
+        }
       }
-    } catch (error) {
+
+      if (result.code != rtc.TUIError.success && mounted) {
+        debugPrint('[TRTC-DEBUG][Page] step6: calls FAILED: ${result.message}');
+        _showMessage(_friendlyError('发起$mediaTypeText通话失败: ${result.message ?? ""}'));
+      }
+    } catch (error, stackTrace) {
+      debugPrint('[TRTC-DEBUG][Page] step EXCEPTION: $error');
+      debugPrint('[TRTC-DEBUG][Page] stackTrace: $stackTrace');
       if (mounted) {
         _showMessage(_friendlyError('发起$mediaTypeText通话失败: $error'));
       }
     } finally {
       if (mounted) {
+        debugPrint('[TRTC-DEBUG][Page] _startCall FINALLY: setting submitting=false');
         setState(() {
           _submitting = false;
         });
@@ -615,7 +691,7 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
   }
 
   Future<void> _preloadUserInfo(List<String> userIds) async {
-    final contactListStore = tui.ContactListStore.create();
+    final contactListStore = ContactListStore.create();
     for (final userId in userIds) {
       try {
         await contactListStore.addFriend(userID: userId);
@@ -633,6 +709,7 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
       return;
     }
     _knownNames[trimmedUserId] = trimmedName;
+    ParticipantNameRegistry.register(trimmedUserId, trimmedName);
   }
 
   void _registerNameFromInvitees() {

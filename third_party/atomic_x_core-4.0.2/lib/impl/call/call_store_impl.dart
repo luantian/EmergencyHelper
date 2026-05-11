@@ -252,6 +252,37 @@ class _CallStoreImpl implements CallStore {
     await engine.TUICallEngine.instance.callExperimentalAPI(jsonMap);
   }
 
+  @override
+  void populateCallerState(String selfUserId, String selfUserName, List<String> inviteeIds, CallMediaType mediaType) {
+    debugPrint('[TRTC-DEBUG][CallStore] populateCallerState: selfUserId=$selfUserId inviteeIds=$inviteeIds mediaType=$mediaType');
+    // Populate selfInfo
+    CallParticipantInfo selfInfo = stateNotifier.selfInfoValue.value;
+    selfInfo = CallParticipantInfo._(
+      id: selfUserId,
+      name: selfUserName,
+      avatarURL: selfInfo.avatarURL,
+      status: CallParticipantStatus.waiting,
+      isMicrophoneOpened: false,
+      isCameraOpened: false,
+    );
+    stateNotifier.selfInfoValue.value = selfInfo;
+
+    // Populate activeCall
+    CallInfo activeCall = stateNotifier.activeCallValue.value;
+    activeCall = CallInfo._(
+      callId: activeCall.callId,
+      roomId: activeCall.roomId,
+      inviterId: selfUserId,
+      inviteeIds: inviteeIds,
+      chatGroupId: activeCall.chatGroupId,
+      mediaType: mediaType,
+      result: CallDirection.outgoing,
+      startTime: activeCall.startTime,
+      duration: activeCall.duration,
+    );
+    stateNotifier.activeCallValue.value = activeCall;
+  }
+
   _getCallObserver() {
     return engine.TUICallObserver(
       onCallReceived: (callId, callerId, calleeIdList, mediaType, info) {
@@ -267,11 +298,21 @@ class _CallStoreImpl implements CallStore {
         );
         stateNotifier.activeCallValue.value = newValue;
 
-        CallParticipantInfo selfOldValue = stateNotifier.selfInfoValue.value;
-        CallParticipantInfo selfNewValue = selfOldValue.copyWith(
+        // Populate selfInfo with the current user's ID from the room engine.
+        // This is critical for CallParticipantView to correctly identify
+        // local vs remote streams on the callee side.
+        var selfUserId = engine.TUIRoomEngine.getSelfInfo().userId ?? '';
+        debugPrint('[TRTC-DEBUG][CallStore] onCallReceived: selfUserId=$selfUserId calleeList=$calleeIdList');
+        CallParticipantInfo selfInfo = stateNotifier.selfInfoValue.value;
+        selfInfo = CallParticipantInfo._(
+          id: selfUserId,
+          name: selfInfo.name.isEmpty ? selfUserId : selfInfo.name,
+          avatarURL: selfInfo.avatarURL,
           status: CallParticipantStatus.waiting,
+          isMicrophoneOpened: false,
+          isCameraOpened: false,
         );
-        stateNotifier.selfInfoValue.value = selfNewValue;
+        stateNotifier.selfInfoValue.value = selfInfo;
 
         List<String> allParticipantIds = List.from(calleeIdList);
         allParticipantIds.add(callerId);
@@ -319,6 +360,9 @@ class _CallStoreImpl implements CallStore {
       },
       onCallEnd: (callId, mediaType, reason, userId, totalTime, info) {
         _stopTimer();
+        // Clear stale local view ID so next call's CallParticipantView
+        // doesn't think its new camera is a duplicate.
+        setLocalCallViewId(0);
         listenerDispatcher.notify((listener) {
           listener.onCallEnded?.call(
               callId,
@@ -330,6 +374,7 @@ class _CallStoreImpl implements CallStore {
         _resetState();
       },
       onCallNotConnected: (callId, mediaType, reason, userId, info) {
+        setLocalCallViewId(0);
         listenerDispatcher.notify((listener) {
           listener.onCallEnded?.call(
               callId,

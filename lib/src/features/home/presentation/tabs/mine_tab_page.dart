@@ -11,9 +11,11 @@ import 'package:emergency_helper/src/core/widgets/app_center_toast.dart';
 import 'package:emergency_helper/src/features/event/data/event_center.dart';
 import 'package:emergency_helper/src/features/risk/data/risk_center.dart';
 import 'package:emergency_helper/src/features/trtc/data/tuicall_session_service.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import 'package:rtc_room_engine/rtc_room_engine.dart' as rtc;
 
 class MineTabPage extends StatefulWidget {
   const MineTabPage({super.key});
@@ -129,6 +131,9 @@ class _MineTabPageState extends State<MineTabPage> {
       _loggingOut = true;
     });
 
+    // Show full-screen loading dialog that covers bottom tab bar too.
+    _showLogoutDialog();
+
     try {
       final dependencies = context.read<AppDependencies>();
       final shouldNotifyServer = !_isFlutterTestEnv();
@@ -137,31 +142,65 @@ class _MineTabPageState extends State<MineTabPage> {
           : null;
       dependencies.apiClient.cancelAllPendingRequests(reason: 'MANUAL_LOGOUT');
       dependencies.apiClient.resetAuthExpiredState();
-      // Reset call session markers immediately to avoid logout->login races.
+
+      // Dispose call observer and uninit TUICallEngine so native SDK
+      // goes offline and stops receiving incoming call notifications.
+      TUICallSessionService.instance.disposeCallObserver();
+      try {
+        await rtc.TUICallEngine.instance
+            .unInit()
+            .timeout(const Duration(seconds: 5));
+        debugPrint('[TRTC-DEBUG][Logout] TUICallEngine.unInit success');
+      } catch (e) {
+        debugPrint('[TRTC-DEBUG][Logout] TUICallEngine.unInit failed: $e');
+      }
       TUICallSessionService.instance.clearLocalSessionState();
+
       await _runWithTimeout(
         dependencies.pushService.unbindAlias(),
         timeout: const Duration(seconds: 1),
+      );
+      await _runWithTimeout(
+        dependencies.pushService.unregisterPush(),
+        timeout: const Duration(seconds: 3),
       );
       await dependencies.authLocalStore.clear();
       EventCenter.instance.resetSessionCache(notify: false);
       RiskCenter.instance.resetSessionData(notify: false);
       AppFeaturePermissionResolver.instance.clearCache();
-      // Make logout responsive: jump to login first, then cleanup in background.
+
+      if (shouldNotifyServer) {
+        await _runWithTimeout(
+          _notifyServerLogout(
+            dependencies: dependencies,
+            accessToken: tokenSnapshot,
+          ),
+          timeout: const Duration(seconds: 3),
+        );
+      }
+      await _runWithTimeout(
+        dependencies.pushService.clearBadgeAndNotifications(),
+        timeout: const Duration(seconds: 2),
+      );
+
       if (!mounted) {
         return;
       }
+      // Pop the dialog before navigating.
+      if (Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
       context.go(RoutePaths.login);
-      unawaited(
-        _finalizeLogoutInBackground(
-          dependencies: dependencies,
-          accessToken: tokenSnapshot,
-          shouldNotifyServer: shouldNotifyServer,
-        ),
-      );
     } on AppException catch (error) {
+      // Pop the dialog and show error.
+      if (Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
       _showMessage(error.message);
     } catch (_) {
+      if (Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
       _showMessage(
         '\u9000\u51FA\u767B\u5F55\u5931\u8D25\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BD5',
       );
@@ -174,27 +213,53 @@ class _MineTabPageState extends State<MineTabPage> {
     }
   }
 
-  Future<void> _finalizeLogoutInBackground({
-    required AppDependencies dependencies,
-    required String? accessToken,
-    required bool shouldNotifyServer,
-  }) async {
-    await _runWithTimeout(
-      dependencies.pushService.unregisterPush(),
-      timeout: const Duration(seconds: 3),
-    );
-    if (shouldNotifyServer) {
-      await _runWithTimeout(
-        _notifyServerLogout(
-          dependencies: dependencies,
-          accessToken: accessToken,
-        ),
-        timeout: const Duration(seconds: 3),
-      );
-    }
-    await _runWithTimeout(
-      dependencies.pushService.clearBadgeAndNotifications(),
-      timeout: const Duration(seconds: 2),
+  void _showLogoutDialog() {
+    showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      barrierLabel: '',
+      barrierColor: const Color(0x66000000),
+      transitionDuration: Duration.zero,
+      pageBuilder: (context, anim1, anim2) {
+        return PopScope(
+          canPop: false,
+          child: Material(
+            color: Colors.transparent,
+            child: Center(
+              child: Container(
+                width: 140,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceWhite,
+                  borderRadius: BorderRadius.circular(AppTheme.radiusXl),
+                ),
+                child: const Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 32,
+                      height: 32,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 3,
+                        color: AppTheme.primaryBlue,
+                      ),
+                    ),
+                    SizedBox(height: 14),
+                    Text(
+                      '\u9000\u51FA\u767B\u5F55\u4E2D...',
+                      style: TextStyle(
+                        color: AppTheme.textPrimary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -271,7 +336,7 @@ class _MineTabPageState extends State<MineTabPage> {
           _asText(permissionUser['title']) ??
           _asText(profileData?['title']) ??
           postName ??
-          '\u5E94\u6025\u4E8B\u4EF6\u7BA1\u7406',
+          '\u5E94\u6025\u52A9\u624B',
       username:
           _asText(permissionUser['username']) ??
           _asText(profileData?['username']) ??
@@ -641,7 +706,7 @@ class _ActionCard extends StatelessWidget {
 class UserProfileViewData {
   const UserProfileViewData({
     this.nickname = '\u672A\u77E5\u7528\u6237',
-    this.title = '\u5E94\u6025\u4E8B\u4EF6\u7BA1\u7406',
+    this.title = '\u5E94\u6025\u52A9\u624B',
     this.username = '--',
     this.department = '--',
     this.job = '--',

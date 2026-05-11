@@ -4,6 +4,7 @@ import 'package:dio/dio.dart';
 import 'package:emergency_helper/src/core/constants/app_constants.dart';
 import 'package:emergency_helper/src/core/errors/app_exception.dart';
 import 'package:emergency_helper/src/core/logging/app_logger.dart';
+import 'package:flutter/foundation.dart';
 
 class ApiAuthExpiredEvent {
   const ApiAuthExpiredEvent({
@@ -36,7 +37,31 @@ class ApiClient {
            contentType: Headers.jsonContentType,
            responseType: ResponseType.json,
          ),
-       );
+       ) {
+    _dio.interceptors.add(InterceptorsWrapper(
+      onRequest: (options, handler) {
+        debugPrint('[API-DEBUG] >>> REQUEST: ${options.method} ${options.baseUrl}${options.path}');
+        debugPrint('[API-DEBUG] query=${options.queryParameters}');
+        debugPrint('[API-DEBUG] auth=${options.headers['authorization']?.substring(0, 10)}...');
+        return handler.next(options);
+      },
+      onResponse: (response, handler) {
+        final dataStr = response.data?.toString() ?? '';
+        debugPrint('[API-DEBUG] <<< RESPONSE: ${response.statusCode}');
+        debugPrint('[API-DEBUG] data=${dataStr.length > 300 ? dataStr.substring(0, 300) + '...' : dataStr}');
+        return handler.next(response);
+      },
+      onError: (error, handler) {
+        debugPrint('[API-DEBUG] <<< ERROR: ${error.response?.statusCode} ${error.message}');
+        debugPrint('[API-DEBUG] url=${error.requestOptions.baseUrl}${error.requestOptions.path}');
+        if (error.response?.data != null) {
+          final errStr = error.response!.data.toString();
+          debugPrint('[API-DEBUG] errData=${errStr.length > 300 ? errStr.substring(0, 300) + '...' : errStr}');
+        }
+        return handler.next(error);
+      },
+    ));
+  }
 
   static const String _authExpiredMessage =
       '\u767B\u5F55\u72B6\u6001\u5DF2\u5931\u6548\uFF0C\u8BF7\u91CD\u65B0\u767B\u5F55';

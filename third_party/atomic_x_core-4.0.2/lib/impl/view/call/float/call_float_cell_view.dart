@@ -1,4 +1,5 @@
 import 'package:atomic_x_core/impl/view/call/call_participant_view.dart';
+import 'package:emergency_helper/src/features/trtc/data/participant_name_registry.dart';
 import 'package:flutter/cupertino.dart';
 
 import '../../../../api/call/call_store.dart';
@@ -143,12 +144,24 @@ class CallFloatCellView extends StatelessWidget {
       return false;
     }
 
-    return info.id == CallStore.shared.state.selfInfo.value.id
-        ? DeviceStore.shared.state.cameraStatus.value == DeviceStatus.off
-        : !info.isCameraOpened;
+    final isSelf = info.id == CallStore.shared.state.selfInfo.value.id;
+    if (isSelf) {
+      // Local user: show background only when camera is explicitly off.
+      return DeviceStore.shared.state.cameraStatus.value == DeviceStatus.off;
+    }
+    // Remote user: show background when camera is explicitly off OR when
+    // the user hasn't accepted/joined yet. Once they've accepted, assume
+    // video is available even if isCameraOpened hasn't been updated by the
+    // SDK callback yet.
+    return !info.isCameraOpened &&
+        info.status != CallParticipantStatus.accept;
   }
 
   String _getUserDisplayName(CallParticipantInfo? info) {
+    // 1. Try global name registry (populated from contacts/route extra)
+    final registered = ParticipantNameRegistry.resolve(userId);
+    if (registered.isNotEmpty) return registered;
+
     if (info == null) {
       return userId;
     }

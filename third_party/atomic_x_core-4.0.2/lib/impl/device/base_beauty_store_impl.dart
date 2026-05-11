@@ -32,7 +32,8 @@ class BaseBeautyStoreImpl extends BaseBeautyStore {
   }
 
   late final _BaseBeautyStateImpl _baseBeautyState = _BaseBeautyStateImpl();
-  final int _beautyStyle = 0;
+  // 1 = smooth style (磨皮+美白+红润), 0 = none (beauty disabled).
+  final int _beautyStyle = 1;
   
   final Log _log = Log.getCommonLog('BaseBeautyStoreImpl');
 

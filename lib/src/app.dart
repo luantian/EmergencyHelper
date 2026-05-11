@@ -16,7 +16,7 @@ import 'package:emergency_helper/src/features/trtc/data/tuicall_session_service.
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
-import 'package:tencent_calls_uikit/tencent_calls_uikit.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 class EmergencyHelperApp extends StatefulWidget {
   const EmergencyHelperApp({super.key, required this.dependencies});
@@ -87,8 +87,15 @@ class _EmergencyHelperAppState extends State<EmergencyHelperApp> {
         title: AppConstants.appName,
         debugShowCheckedModeBanner: false,
         theme: AppTheme.lightTheme(),
-        localizationsDelegates: AtomicLocalizations.localizationsDelegates,
-        supportedLocales: AtomicLocalizations.supportedLocales,
+        localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
+        supportedLocales: const [
+          Locale('zh', 'CN'),
+          Locale('en', 'US'),
+        ],
         routerConfig: _router,
         builder: (context, child) {
           return Stack(

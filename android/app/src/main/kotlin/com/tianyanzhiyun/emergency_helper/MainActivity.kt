@@ -54,6 +54,8 @@ class MainActivity : FlutterActivity() {
         ).setMethodCallHandler { call, result ->
             if (call.method == "stopIncomingCallAndFinish") {
                 stopIncomingCallAndFinish(result)
+            } else if (call.method == "queryCallState") {
+                queryCallState(result)
             } else {
                 result.notImplemented()
             }
@@ -239,6 +241,92 @@ class MainActivity : FlutterActivity() {
     }
 
     /**
+     * Query the current call state via TUICallEngine.callExperimentalAPI.
+     * Tries multiple experimental API names to find one that returns call state.
+     * This accesses the same native .so that the Flutter FFI uses.
+     */
+    private fun queryCallState(result: MethodChannel.Result) {
+        try {
+            val candidateClasses = listOf(
+                "com.tencent.cloud.tuikit.engine.call.TUICallEngine",
+            )
+            for (className in candidateClasses) {
+                try {
+                    val engineClass = Class.forName(className)
+                    // TUICallEngine uses createInstance(Context) and destroyInstance()
+                    // We need the existing instance, not create a new one.
+                    // Try to get the sInstance field from TUICallEngineImpl
+                    val implClass = Class.forName(
+                        "com.tencent.cloud.tuikit.engine.impl.call.TUICallEngineImpl"
+                    )
+                    val sInstanceField = implClass.getDeclaredField("sInstance")
+                    sInstanceField.isAccessible = true
+                    val engine = sInstanceField.get(null)
+                    if (engine == null) {
+                        Log.d(TAG, "queryCallState: TUICallEngineImpl.sInstance is null")
+                        result.success("idle")
+                        return
+                    }
+
+                    // Try callExperimentalAPI with various API names
+                    val expApiMethod = engineClass.getMethod(
+                        "callExperimentalAPI",
+                        String::class.java
+                    )
+
+                    val apiNames = listOf(
+                        "getCallState",
+                        "getCurrentCallState",
+                        "getCallInfo",
+                        "status",
+                        "getCallStatus",
+                        "checkCallState",
+                        "queryCallState",
+                        "engineStatus",
+                        "getEngineStatus",
+                    )
+
+                    for (apiName in apiNames) {
+                        try {
+                            val jsonParam = "{\"api\":\"$apiName\"}"
+                            val expResult = expApiMethod.invoke(engine, jsonParam)
+                            Log.d(TAG, "queryCallState: $apiName → $expResult")
+                        } catch (e: Exception) {
+                            // API not available
+                        }
+                    }
+
+                    // Also try the query(String, String) method
+                    try {
+                        val queryMethod = engineClass.getMethod(
+                            "query",
+                            String::class.java,
+                            String::class.java
+                        )
+                        val queryResult = queryMethod.invoke(engine, "callState", "")
+                        Log.d(TAG, "queryCallState: query(\"callState\",\"\") → $queryResult")
+                    } catch (e: Exception) {
+                        Log.d(TAG, "queryCallState: query method not available")
+                    }
+
+                    // Fallback: check CallStateTracker (native observer)
+                    val state = CallStateTracker.callState
+                    Log.d(TAG, "queryCallState: tracker state=$state")
+                    result.success(state)
+                    return
+                } catch (e: ClassNotFoundException) {
+                    // Class not found
+                }
+            }
+            Log.w(TAG, "queryCallState: TUICallEngine class not found")
+            result.success("class_not_found")
+        } catch (e: Exception) {
+            Log.e(TAG, "queryCallState: exception", e)
+            result.success("error:${e.message}")
+        }
+    }
+
+    /**
      * Native-side workaround to stop incoming call vibration and ringtone.
      * Called when another device already accepted the call (FFI bug workaround).
      * This directly calls TUICallEngine.hangup() which properly closes the
@@ -277,7 +365,8 @@ class MainActivity : FlutterActivity() {
             try {
                 // Try various possible TUICallEngine class names
                 val candidateClasses = listOf(
-                    "io.trtc.tuikit.tuicalling.TUICallEngine",
+                    "com.tencent.cloud.tuikit.engine.call.TUICallEngine",
+                    "io.trtc.uikit.tuicalling.TUICallEngine",
                     "com.tencent.qcloud.timtuicalling.TUICallEngine",
                     "com.tencent.qcloud.tuikit.tuicalling.TUICallEngine",
                     "com.tencent.trtc.tuicalling.TUICallEngine",
@@ -308,7 +397,8 @@ class MainActivity : FlutterActivity() {
             if (!hangupCalled) {
                 try {
                     val candidateClasses = listOf(
-                        "io.trtc.tuikit.tuicalling.TUICallEngine",
+                        "com.tencent.cloud.tuikit.engine.call.TUICallEngine",
+                        "io.trtc.uikit.tuicalling.TUICallEngine",
                         "com.tencent.qcloud.timtuicalling.TUICallEngine",
                         "com.tencent.qcloud.tuikit.tuicalling.TUICallEngine",
                         "com.tencent.trtc.tuicalling.TUICallEngine",

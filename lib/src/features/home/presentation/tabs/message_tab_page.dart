@@ -700,21 +700,7 @@ class _MessageTabPageState extends State<MessageTabPage>
   }
 
   List<NotifyMessageItem> _sortedMessageItems(List<NotifyMessageItem> source) {
-    final sorted = List<NotifyMessageItem>.from(source);
-    sorted.sort(_compareMessageItem);
-    return sorted;
-  }
-
-  int _compareMessageItem(NotifyMessageItem a, NotifyMessageItem b) {
-    if (a.readStatus != b.readStatus) {
-      return a.readStatus ? 1 : -1;
-    }
-    final aTime = a.createTime?.millisecondsSinceEpoch ?? -1;
-    final bTime = b.createTime?.millisecondsSinceEpoch ?? -1;
-    if (aTime != bTime) {
-      return bTime.compareTo(aTime);
-    }
-    return b.id.compareTo(a.id);
+    return source;
   }
 
   void _emitUnreadHint(int value) {

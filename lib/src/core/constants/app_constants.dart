@@ -1,7 +1,7 @@
 class AppConstants {
   const AppConstants._();
 
-  static const String appName = '应急事件管理';
+  static const String appName = '应急助手';
   static const String apiBaseUrl = 'http://47.104.73.59:93';
   static const String appBuildName = String.fromEnvironment(
     'FLUTTER_BUILD_NAME',

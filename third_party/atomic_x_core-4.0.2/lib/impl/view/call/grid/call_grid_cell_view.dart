@@ -184,9 +184,12 @@ class CallGridCellView extends StatelessWidget {
       return false;
     }
 
-    return info.id == CallStore.shared.state.selfInfo.value.id
-        ? DeviceStore.shared.state.cameraStatus.value == DeviceStatus.off
-        : !info.isCameraOpened;
+    final isSelf = info.id == CallStore.shared.state.selfInfo.value.id;
+    if (isSelf) {
+      return DeviceStore.shared.state.cameraStatus.value == DeviceStatus.off;
+    }
+    return !info.isCameraOpened &&
+        info.status != CallParticipantStatus.accept;
   }
 
   String _getUserDisplayName(CallParticipantInfo? info) {

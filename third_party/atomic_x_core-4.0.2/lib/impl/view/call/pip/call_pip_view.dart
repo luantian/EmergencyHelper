@@ -150,9 +150,11 @@ class _CallPipViewState extends State<CallPipView> {
 
 
   bool _isShowBackgroundImage(CallParticipantInfo info) {
-    var show = info.id == CallStore.shared.state.selfInfo.value.id
-        ? DeviceStore.shared.state.cameraStatus.value == DeviceStatus.off
-        : !info.isCameraOpened;
-    return show;
+    final isSelf = info.id == CallStore.shared.state.selfInfo.value.id;
+    if (isSelf) {
+      return DeviceStore.shared.state.cameraStatus.value == DeviceStatus.off;
+    }
+    return !info.isCameraOpened &&
+        info.status != CallParticipantStatus.accept;
   }
 }
