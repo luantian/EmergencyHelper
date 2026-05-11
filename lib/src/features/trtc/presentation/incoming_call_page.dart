@@ -44,6 +44,9 @@ class _IncomingCallPageState extends State<IncomingCallPage>
   Timer? _callStatePollTimer;
   StreamSubscription<dynamic>? _nativeCallEventSub;
 
+  /// Guards against multiple dismissal attempts (reject/timeout/native event).
+  bool _hasDismissed = false;
+
   /// Reason codes from TUICallDefine.CallEndReason (native enum values).
   static const int _reasonOtherDeviceAccepted = 7;
   static const int _reasonOtherDeviceReject = 8;
@@ -135,17 +138,7 @@ class _IncomingCallPageState extends State<IncomingCallPage>
     // it means the call was handled elsewhere (e.g., another device accepted).
     if (activeCall.callId.isEmpty) {
       debugPrint('[TRTC-DEBUG][IncomingCall] activeCall cleared, call handled elsewhere');
-      _stopRinging();
-      if (mounted) {
-        // Only pop if this page is currently the top route.
-        // When the callee has answered and navigated to InCallPage,
-        // IncomingCallPage is underneath and should NOT pop itself here.
-        final isTopRoute = ModalRoute.of(context)?.isCurrent == true;
-        debugPrint('[TRTC-DEBUG][IncomingCall] _onActiveCallChanged: isTopRoute=$isTopRoute');
-        if (isTopRoute) {
-          Navigator.of(context).pop();
-        }
-      }
+      _dismissCallPage();
     }
   }
 
@@ -153,10 +146,9 @@ class _IncomingCallPageState extends State<IncomingCallPage>
     if (!mounted) return;
     final session = CallSessionManager.instance.current;
     if (session.phase == CallPhase.incomingRinging) {
-      debugPrint('[TRTC-DEBUG][IncomingCall] timeout: call not handled locally within 60s');
+      debugPrint('[TRTC-DEBUG][IncomingCall] timeout: call not handled locally within 30s');
       AppCenterToast.show(context, '通话可能已在其他设备处理');
-      _stopRinging();
-      Navigator.of(context).pop();
+      _dismissCallPage();
     }
   }
 
@@ -203,6 +195,25 @@ class _IncomingCallPageState extends State<IncomingCallPage>
     }
   }
 
+  /// Unified dismissal: stop ringing and pop this page if it's the top route.
+  /// Guards against multiple dismissal attempts from different code paths.
+  void _dismissCallPage() {
+    if (_hasDismissed) {
+      debugPrint('[TRTC-DEBUG][IncomingCall] _dismissCallPage: already dismissed, skipping');
+      return;
+    }
+    debugPrint('[TRTC-DEBUG][IncomingCall] _dismissCallPage: dismissing');
+    _hasDismissed = true;
+    _stopRinging();
+    if (mounted) {
+      final isTopRoute = ModalRoute.of(context)?.isCurrent == true;
+      debugPrint('[TRTC-DEBUG][IncomingCall] _dismissCallPage: isTopRoute=$isTopRoute');
+      if (isTopRoute) {
+        Navigator.of(context).pop();
+      }
+    }
+  }
+
   @override
   void dispose() {
     debugPrint('[TRTC-DEBUG][IncomingCall] dispose');
@@ -219,12 +230,11 @@ class _IncomingCallPageState extends State<IncomingCallPage>
   void _onCallNotification(String message) {
     debugPrint('[TRTC-DEBUG][IncomingCall] notification: $message');
     if (message.contains('其他设备接听') || message.contains('其他设备拒绝')) {
-      debugPrint('[TRTC-DEBUG][IncomingCall] other device handled, popping');
-      _stopRinging();
+      debugPrint('[TRTC-DEBUG][IncomingCall] other device handled, dismissing');
       if (mounted) {
         AppCenterToast.show(context, message);
-        Navigator.of(context).pop();
       }
+      _dismissCallPage();
     }
   }
 
@@ -248,22 +258,16 @@ class _IncomingCallPageState extends State<IncomingCallPage>
       if (reason == _reasonOtherDeviceAccepted ||
           reasonName == 'otherDeviceAccepted') {
         debugPrint('[TRTC-DEBUG][IncomingCall] ⚡ other device accepted → dismissing');
-        _stopRinging();
-        if (mounted) {
-          AppCenterToast.show(context, '通话已在其他设备接听');
-          Navigator.of(context).pop();
-        }
+        AppCenterToast.show(context, '通话已在其他设备接听');
+        _dismissCallPage();
         return;
       }
 
       if (reason == _reasonOtherDeviceReject ||
           reasonName == 'otherDeviceReject') {
         debugPrint('[TRTC-DEBUG][IncomingCall] ⚡ other device rejected → dismissing');
-        _stopRinging();
-        if (mounted) {
-          AppCenterToast.show(context, '通话已在其他设备拒绝');
-          Navigator.of(context).pop();
-        }
+        AppCenterToast.show(context, '通话已在其他设备拒绝');
+        _dismissCallPage();
         return;
       }
 
@@ -271,11 +275,8 @@ class _IncomingCallPageState extends State<IncomingCallPage>
       // often means other device handled it, NOT caller hangup.
       if (reason == _reasonHangup || reason == _reasonReject) {
         debugPrint('[TRTC-DEBUG][IncomingCall] ⚡ hangup/reject during incoming → treating as other device handled');
-        _stopRinging();
-        if (mounted) {
-          AppCenterToast.show(context, '通话已在其他设备处理');
-          Navigator.of(context).pop();
-        }
+        AppCenterToast.show(context, '通话已在其他设备处理');
+        _dismissCallPage();
         return;
       }
     }
@@ -356,6 +357,24 @@ class _IncomingCallPageState extends State<IncomingCallPage>
         _startRinging();
       }
     }
+
+    // Fallback: if onCallBegin observer doesn't fire within 12s,
+    // navigate to InCallPage manually to avoid black screen.
+    Future<void>.delayed(const Duration(seconds: 12), () {
+      if (!mounted) return;
+      final phase = CallSessionManager.instance.current.phase;
+      debugPrint('[TRTC-DEBUG][IncomingCall] accept fallback check: phase=$phase');
+      if (phase != CallPhase.inCall &&
+          phase != CallPhase.outgoingRinging) {
+        debugPrint('[TRTC-DEBUG][IncomingCall] onCallBegin not received, navigating to InCallPage manually');
+        CustomCallNavigator.instance.navigateToInCall(
+          callId: widget.callId,
+          mediaType: widget.mediaType == CallMediaType.video ? 'video' : 'audio',
+          selfUserId: TUICallSessionService.instance.activeUserId,
+          isCallerSide: false,
+        );
+      }
+    });
     // onCallBegin observer will navigate to InCallPage automatically
   }
 
@@ -450,10 +469,11 @@ class _IncomingCallPageState extends State<IncomingCallPage>
       debugPrint('[TRTC-DEBUG][IncomingCall] CallStore.reject() returned');
     } catch (e) {
       debugPrint('[TRTC-DEBUG][IncomingCall] reject failed: $e');
+    } finally {
+      // Dismiss via unified handler to avoid race condition with
+      // SDK onCallNotConnected → dismissAllCallScreens.
+      _dismissCallPage();
     }
-    // Do NOT pop here. The SDK will fire onCallNotConnected(reject)
-    // which calls dismissAllCallScreens() to handle navigation.
-    // Popping manually + SDK dismissal causes race condition → black screen.
   }
 
   /// Cold-start reject: reject the call directly via TUICallEngine.
