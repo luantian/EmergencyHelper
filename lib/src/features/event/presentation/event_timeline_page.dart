@@ -1,5 +1,6 @@
 import 'package:emergency_helper/src/core/di/app_dependencies.dart';
 import 'package:emergency_helper/src/core/errors/app_exception.dart';
+import 'package:emergency_helper/src/core/widgets/app_empty_view.dart';
 import 'package:emergency_helper/src/core/widgets/app_loading_overlay.dart';
 import 'package:emergency_helper/src/features/event/data/event_center.dart';
 import 'package:emergency_helper/src/core/theme/app_theme.dart';
@@ -104,7 +105,15 @@ class _EventTimelinePageState extends State<EventTimelinePage> {
     }
 
     if (event == null) {
-      return const Center(child: Text('事件不存在或已删除'));
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: 24),
+          child: AppEmptyView(
+            icon: Icons.event_busy_outlined,
+            message: '该事件不存在或已被删除',
+          ),
+        ),
+      );
     }
 
     return ListView(

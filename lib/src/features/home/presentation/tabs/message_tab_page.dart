@@ -5,6 +5,7 @@ import 'package:emergency_helper/src/core/errors/app_exception.dart';
 import 'package:emergency_helper/src/core/routing/route_paths.dart';
 import 'package:emergency_helper/src/core/theme/app_theme.dart';
 import 'package:emergency_helper/src/core/widgets/app_center_toast.dart';
+import 'package:emergency_helper/src/core/widgets/app_empty_view.dart';
 import 'package:emergency_helper/src/core/widgets/app_loading_overlay.dart';
 import 'package:emergency_helper/src/features/home/data/notify_message_service.dart';
 import 'package:emergency_helper/src/features/home/presentation/message_detail_page.dart';
@@ -39,11 +40,10 @@ class _MessageTabPageState extends State<MessageTabPage>
   static const String _messageUnreadOnlyKey = '__unread__';
   static const List<String> _messageTypeOrder = <String>[
     'event_report',
-    'risk_report',
     'event_dynamic',
+    'risk_report',
     'risk_dynamic',
     'weather_warning',
-    'other',
   ];
   static const List<Duration> _unreadSyncRetryDelays = <Duration>[
     Duration(milliseconds: 650),
@@ -53,6 +53,7 @@ class _MessageTabPageState extends State<MessageTabPage>
 
   final NotifyMessageService _service = const NotifyMessageService();
   final ScrollController _scrollController = ScrollController();
+  final GlobalKey _filterButtonKey = GlobalKey();
 
   StreamSubscription<PushIncomingEvent>? _pushEventSubscription;
   Timer? _activeAutoRefreshTimer;
@@ -189,7 +190,7 @@ class _MessageTabPageState extends State<MessageTabPage>
                   ),
                 ),
               ),
-            if (_items.isNotEmpty) _buildTypeFilterBar(typeFilters),
+            _buildTypeFilterBar(typeFilters),
             Expanded(
               child: filteredItems.isEmpty
                   ? RefreshIndicator(
@@ -199,9 +200,13 @@ class _MessageTabPageState extends State<MessageTabPage>
                         children: <Widget>[
                           const SizedBox(height: 160),
                           _items.isEmpty
-                              ? const _EmptyMessageView()
-                              : _FilteredEmptyMessageView(
-                                  label: _activeFilterLabel(typeFilters),
+                              ? const AppEmptyView(
+                                  icon: Icons.event_note_outlined,
+                                  message: '暂无消息',
+                                )
+                              : AppEmptyView(
+                                  icon: Icons.filter_alt_off_rounded,
+                                  message: '${_activeFilterLabel(typeFilters)} 暂无消息',
                                 ),
                         ],
                       ),
@@ -281,6 +286,7 @@ class _MessageTabPageState extends State<MessageTabPage>
             child: Material(
               color: Colors.transparent,
               child: InkWell(
+                key: _filterButtonKey,
                 borderRadius: BorderRadius.circular(12),
                 onTap: () => _showFilterMenu(options, selectedKey),
                 child: Container(
@@ -328,11 +334,21 @@ class _MessageTabPageState extends State<MessageTabPage>
     List<_MessageTypeFilterOption> options,
     String selectedKey,
   ) {
+    final overlay = Overlay.of(context);
+    final buttonBox = _filterButtonKey.currentContext?.findRenderObject()
+        as RenderBox?;
+    final buttonPosition = buttonBox?.localToGlobal(Offset.zero);
+    final buttonWidth = buttonBox?.size.width ?? 120;
+    final topPadding = buttonPosition?.dy ?? 80;
+
     late OverlayEntry overlayEntry;
     overlayEntry = OverlayEntry(
       builder: (context) => _FilterMenuOverlay(
         options: options,
         selectedKey: selectedKey,
+        topOffset: topPadding + 44,
+        leftOffset: buttonPosition?.dx ?? 12,
+        buttonWidth: buttonWidth,
         onSelected: (key) {
           overlayEntry.remove();
           if (key != _selectedTypeFilterKey) {
@@ -345,7 +361,7 @@ class _MessageTabPageState extends State<MessageTabPage>
       ),
     );
 
-    Overlay.of(context).insert(overlayEntry);
+    overlay.insert(overlayEntry);
   }
 
   List<_MessageTypeFilterOption> _buildTypeFilters() {
@@ -379,7 +395,7 @@ class _MessageTabPageState extends State<MessageTabPage>
       options.add(
         _MessageTypeFilterOption(
           key: key,
-          label: labels[key] ?? fallbackLabels[key] ?? key,
+          label: fallbackLabels[key]!,
         ),
       );
     }
@@ -411,11 +427,9 @@ class _MessageTabPageState extends State<MessageTabPage>
       }
       return _items.where((item) => !item.readStatus).toList(growable: false);
     }
-    final hasMatch = _items.any(
-      (item) => item.messageTypeKey == _selectedTypeFilterKey,
-    );
-    if (!hasMatch) {
-      return _items;
+    debugPrint('[Filter] selectedKey=$_selectedTypeFilterKey, itemCount=${_items.length}');
+    for (final item in _items) {
+      debugPrint('[Filter] item key=${item.messageTypeKey}');
     }
     return _items
         .where((item) => item.messageTypeKey == _selectedTypeFilterKey)
@@ -510,6 +524,23 @@ class _MessageTabPageState extends State<MessageTabPage>
     });
   }
 
+  bool? _apiReadStatus() {
+    if (_selectedTypeFilterKey == _messageUnreadOnlyKey) return false;
+    return null;
+  }
+
+  String? _apiMessageType() {
+    if (_selectedTypeFilterKey == _messageTypeAllKey ||
+        _selectedTypeFilterKey == _messageUnreadOnlyKey) {
+      return null;
+    }
+    return _selectedTypeFilterKey;
+  }
+
+  bool _isTypeFilter(String key) {
+    return _messageTypeOrder.contains(key);
+  }
+
   Future<void> _refreshMessages() async {
     if (_loading) {
       return;
@@ -524,10 +555,14 @@ class _MessageTabPageState extends State<MessageTabPage>
 
     try {
       final dependencies = context.read<AppDependencies>();
+      final readStatus = _apiReadStatus();
+      final messageType = _apiMessageType();
       final page = await _service.loadMyPage(
         dependencies.apiClient,
         pageNo: 1,
         pageSize: _pageSize,
+        readStatus: readStatus,
+        messageType: messageType,
       );
       if (!mounted) {
         return;
@@ -573,10 +608,14 @@ class _MessageTabPageState extends State<MessageTabPage>
     try {
       final dependencies = context.read<AppDependencies>();
       final nextPage = _currentPage + 1;
+      final readStatus = _apiReadStatus();
+      final messageType = _apiMessageType();
       final page = await _service.loadMyPage(
         dependencies.apiClient,
         pageNo: nextPage,
         pageSize: _pageSize,
+        readStatus: readStatus,
+        messageType: messageType,
       );
       if (!mounted) {
         return;
@@ -969,64 +1008,6 @@ class _MessageItemTile extends StatelessWidget {
   }
 }
 
-class _EmptyMessageView extends StatelessWidget {
-  const _EmptyMessageView();
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        children: const <Widget>[
-          Icon(
-            Icons.mark_email_read_outlined,
-            size: 44,
-            color: Color(0xFF9AABBF),
-          ),
-          SizedBox(height: 10),
-          Text(
-            '\u6682\u65E0\u6D88\u606F',
-            style: TextStyle(
-              color: Color(0xFF6F8095),
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _FilteredEmptyMessageView extends StatelessWidget {
-  const _FilteredEmptyMessageView({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        children: <Widget>[
-          const Icon(
-            Icons.filter_alt_off_rounded,
-            size: 42,
-            color: Color(0xFF9AABBF),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            '$label 暂无消息',
-            style: const TextStyle(
-              color: Color(0xFF6F8095),
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _MessageTypeFilterOption {
   const _MessageTypeFilterOption({required this.key, required this.label});
 
@@ -1049,12 +1030,18 @@ class _MessageTypeVisualStyle {
 class _FilterMenuOverlay extends StatefulWidget {
   final List<_MessageTypeFilterOption> options;
   final String selectedKey;
+  final double topOffset;
+  final double leftOffset;
+  final double buttonWidth;
   final void Function(String key) onSelected;
   final VoidCallback onDismiss;
 
   const _FilterMenuOverlay({
     required this.options,
     required this.selectedKey,
+    required this.topOffset,
+    required this.leftOffset,
+    required this.buttonWidth,
     required this.onSelected,
     required this.onDismiss,
   });
@@ -1095,10 +1082,14 @@ class _FilterMenuOverlayState extends State<_FilterMenuOverlay>
       onTap: widget.onDismiss,
       child: FadeTransition(
         opacity: _animation,
-        child: Center(
-          child: GestureDetector(
-            onTap: () {},
-            child: Container(
+        child: Stack(
+          children: [
+            Positioned(
+              top: widget.topOffset,
+              left: widget.leftOffset,
+              child: GestureDetector(
+                onTap: () {},
+                child: Container(
               width: 280,
               decoration: BoxDecoration(
                 color: Colors.white,
@@ -1164,10 +1155,12 @@ class _FilterMenuOverlayState extends State<_FilterMenuOverlay>
                 ],
               ),
             ),
-          ),
-        ),
-      ),
-    );
+          ),  // GestureDetector (onTap)
+          ),  // Positioned
+          ],  // Stack children
+        ),  // Stack
+      ),  // FadeTransition
+    );  // GestureDetector
   }
 }
 

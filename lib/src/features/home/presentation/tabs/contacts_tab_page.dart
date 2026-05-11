@@ -193,47 +193,56 @@ class _ContactsTabPageState extends State<ContactsTabPage> {
               ),
             ),
             Expanded(
-              child: visibleRows.isEmpty
-                  ? const _EmptySearchResult()
-                  : ListView.builder(
-                      key: const Key('contacts-tree-list'),
-                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                      itemCount: visibleRows.length,
-                      itemBuilder: (context, index) {
-                        final row = visibleRows[index];
-                        if (row is _GroupRow) {
-                          final group = row.group;
-                          final hasChildren =
-                              group.children.isNotEmpty ||
-                              group.contacts.isNotEmpty;
-                          final contactCount = _countContactsInGroup(group);
-                          return _GroupTile(
-                            key: ValueKey(group.id),
-                            group: group,
-                            depth: row.depth,
-                            isExpanded: row.isExpanded,
-                            isMatched: row.isMatched,
-                            hasChildren: hasChildren,
-                            contactCount: contactCount,
+              child: RefreshIndicator(
+                onRefresh: _loadContacts,
+                child: visibleRows.isEmpty
+                    ? ListView(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        children: const <Widget>[
+                          SizedBox(height: 140),
+                          _EmptySearchResult(),
+                        ],
+                      )
+                    : ListView.builder(
+                        key: const Key('contacts-tree-list'),
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                        itemCount: visibleRows.length,
+                        itemBuilder: (context, index) {
+                          final row = visibleRows[index];
+                          if (row is _GroupRow) {
+                            final group = row.group;
+                            final hasChildren =
+                                group.children.isNotEmpty ||
+                                group.contacts.isNotEmpty;
+                            final contactCount = _countContactsInGroup(group);
+                            return _GroupTile(
+                              key: ValueKey(group.id),
+                              group: group,
+                              depth: row.depth,
+                              isExpanded: row.isExpanded,
+                              isMatched: row.isMatched,
+                              hasChildren: hasChildren,
+                              contactCount: contactCount,
+                              keyword: _searchKeyword,
+                              onTap: hasChildren
+                                  ? () => _toggleGroup(group.id)
+                                  : null,
+                            );
+                          }
+                          final personRow = row as _ContactRow;
+                          return _ContactTile(
+                            key: ValueKey('${personRow.contact.id}-tile'),
+                            contact: personRow.contact,
+                            depth: personRow.depth,
                             keyword: _searchKeyword,
-                            onTap: hasChildren
-                                ? () => _toggleGroup(group.id)
-                                : null,
+                            isMatched: personRow.isMatched,
+                            onVideoCall: () => _startVideoCall(personRow.contact),
+                            onCall: () => _callContact(personRow.contact),
+                            onCopyPhone: () => _copyContactPhone(personRow.contact),
                           );
-                        }
-                        final personRow = row as _ContactRow;
-                        return _ContactTile(
-                          key: ValueKey('${personRow.contact.id}-tile'),
-                          contact: personRow.contact,
-                          depth: personRow.depth,
-                          keyword: _searchKeyword,
-                          isMatched: personRow.isMatched,
-                          onVideoCall: () => _startVideoCall(personRow.contact),
-                          onCall: () => _callContact(personRow.contact),
-                          onCopyPhone: () => _copyContactPhone(personRow.contact),
-                        );
-                      },
-                    ),
+                        },
+                      ),
+              ),
             ),
           ],
         ),

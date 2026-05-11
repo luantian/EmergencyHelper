@@ -13,6 +13,7 @@ class NotifyMessageService {
     required int pageNo,
     int pageSize = 20,
     bool? readStatus,
+    String? messageType,
   }) async {
     final response = await apiClient.getJson(
       AppConstants.notifyMessageMyPagePath,
@@ -20,6 +21,7 @@ class NotifyMessageService {
         'pageNo': pageNo,
         'pageSize': pageSize,
         if (readStatus != null) 'readStatus': readStatus.toString(),
+        if (messageType != null && messageType.isNotEmpty) 'messageType': messageType,
       },
     );
     final data = _expectSuccessAndData(

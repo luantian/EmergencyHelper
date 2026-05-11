@@ -46,50 +46,53 @@ class _MineTabPageState extends State<MineTabPage> {
         centerTitle: true,
       ),
       backgroundColor: const Color(0xFFF1F5FA),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(12, 12, 12, 22),
-        children: <Widget>[
-          _ProfileHeroCard(profile: profile, loading: _loadingProfile),
-          const SizedBox(height: 10),
-          _ProfileInfoCard(profile: profile, loading: _loadingProfile),
-          const SizedBox(height: 10),
-          _ActionCard(
-            onChangePassword: () => context.push(RoutePaths.changePassword),
-            onPushDebug: () => context.push(RoutePaths.pushDebug),
-            onBusinessDebug: () => context.push(RoutePaths.businessDebug),
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              key: const Key('logout-button'),
-              onPressed: _loggingOut ? null : _onLogout,
-              icon: Icon(
-                _loggingOut
-                    ? Icons.hourglass_top_rounded
-                    : Icons.logout_rounded,
-                size: 18,
-              ),
-              label: Text(
-                _loggingOut
-                    ? '\u9000\u51FA\u4E2D...'
-                    : '\u9000\u51FA\u767B\u5F55',
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
+      body: RefreshIndicator(
+        onRefresh: _loadProfile,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 22),
+          children: <Widget>[
+            _ProfileHeroCard(profile: profile, loading: _loadingProfile),
+            const SizedBox(height: 10),
+            _ProfileInfoCard(profile: profile, loading: _loadingProfile),
+            const SizedBox(height: 10),
+            _ActionCard(
+              onChangePassword: () => context.push(RoutePaths.changePassword),
+              onPushDebug: () => context.push(RoutePaths.pushDebug),
+              onBusinessDebug: () => context.push(RoutePaths.businessDebug),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                key: const Key('logout-button'),
+                onPressed: _loggingOut ? null : _onLogout,
+                icon: Icon(
+                  _loggingOut
+                      ? Icons.hourglass_top_rounded
+                      : Icons.logout_rounded,
+                  size: 18,
                 ),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.primaryBlue,
-                foregroundColor: Colors.white,
-                minimumSize: const Size.fromHeight(46),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+                label: Text(
+                  _loggingOut
+                      ? '\u9000\u51FA\u4E2D...'
+                      : '\u9000\u51FA\u767B\u5F55',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primaryBlue,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size.fromHeight(46),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

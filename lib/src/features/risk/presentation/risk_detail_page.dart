@@ -8,6 +8,7 @@ import 'package:emergency_helper/src/core/routing/route_paths.dart';
 import 'package:emergency_helper/src/features/risk/data/risk_center.dart';
 import 'package:emergency_helper/src/core/theme/app_theme.dart';
 import 'package:emergency_helper/src/core/widgets/app_center_toast.dart';
+import 'package:emergency_helper/src/core/widgets/app_empty_view.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
@@ -30,10 +31,41 @@ class RiskDetailPage extends StatelessWidget {
               title: const Text('\u98CE\u9669\u4FE1\u606F'),
               backgroundColor: AppTheme.primaryBlue,
               foregroundColor: Colors.white,
+              leading: IconButton(
+                icon: const Icon(Icons.arrow_back),
+                onPressed: () => context.pop(),
+              ),
             ),
-            body: const Center(
-              child: Text(
-                '\u98CE\u9669\u4E0D\u5B58\u5728\u6216\u5DF2\u5220\u9664',
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    const AppEmptyView(
+                      icon: Icons.warning_amber_outlined,
+                      message: '\u8BE5\u98CE\u9669\u4E0D\u5B58\u5728\u6216\u5DF2\u88AB\u5220\u9664',
+                    ),
+                    const SizedBox(height: 20),
+                    ElevatedButton.icon(
+                      onPressed: () => context.pop(),
+                      icon: const Icon(Icons.arrow_back, size: 16),
+                      label: const Text('\u8FD4\u56DE'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF2088E8),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 10,
+                        ),
+                        elevation: 0,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           );

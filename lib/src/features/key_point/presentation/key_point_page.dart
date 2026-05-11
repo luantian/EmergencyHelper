@@ -5,6 +5,7 @@ import 'package:emergency_helper/src/core/di/app_dependencies.dart';
 import 'package:emergency_helper/src/core/errors/app_exception.dart';
 import 'package:emergency_helper/src/core/theme/app_theme.dart';
 import 'package:emergency_helper/src/core/widgets/app_center_toast.dart';
+import 'package:emergency_helper/src/core/widgets/app_empty_view.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_baidu_mapapi_base/flutter_baidu_mapapi_base.dart';
@@ -1230,15 +1231,9 @@ class _PointListPanel extends StatelessWidget {
           const Divider(height: 1, color: Color(0xFFD8E1EC)),
           Expanded(
             child: sites.isEmpty
-                ? const Center(
-                    child: Text(
-                      '\u6682\u65E0\u70B9\u4F4D\u6570\u636E',
-                      style: TextStyle(
-                        color: Color(0xFF7E8EA2),
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
+                ? const AppEmptyView(
+                    icon: Icons.location_on_outlined,
+                    message: '\u6682\u65E0\u70B9\u4F4D\u6570\u636E',
                   )
                 : ListView.separated(
                     padding: const EdgeInsets.fromLTRB(12, 10, 12, 14),

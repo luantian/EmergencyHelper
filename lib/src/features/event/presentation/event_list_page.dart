@@ -1,6 +1,7 @@
 import 'package:emergency_helper/src/core/di/app_dependencies.dart';
 import 'package:emergency_helper/src/core/errors/app_exception.dart';
 import 'package:emergency_helper/src/core/routing/route_paths.dart';
+import 'package:emergency_helper/src/core/widgets/app_empty_view.dart';
 import 'package:emergency_helper/src/core/widgets/app_loading_overlay.dart';
 import 'package:emergency_helper/src/features/event/data/event_center.dart';
 import 'package:emergency_helper/src/core/theme/app_theme.dart';
@@ -243,16 +244,11 @@ class _EventListPageState extends State<EventListPage> {
                       onRefresh: _refreshEvents,
                       child: ListView(
                         physics: const AlwaysScrollableScrollPhysics(),
-                        children: const <Widget>[
+                        children: <Widget>[
                           SizedBox(height: 140),
-                          Center(
-                            child: Text(
-                              '\u6682\u65E0\u4E8B\u4EF6',
-                              style: TextStyle(
-                                color: Color(0xFF808995),
-                                fontSize: 15,
-                              ),
-                            ),
+                          AppEmptyView(
+                            icon: Icons.event_note_outlined,
+                            message: '\u6682\u65E0\u4E8B\u4EF6',
                           ),
                         ],
                       ),

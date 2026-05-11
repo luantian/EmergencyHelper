@@ -1,4 +1,5 @@
-﻿import 'package:emergency_helper/src/core/routing/route_paths.dart';
+﻿import 'package:emergency_helper/src/core/widgets/app_empty_view.dart';
+import 'package:emergency_helper/src/core/routing/route_paths.dart';
 import 'package:emergency_helper/src/features/risk/data/risk_center.dart';
 import 'package:emergency_helper/src/core/theme/app_theme.dart';
 import 'package:flutter/material.dart';
@@ -146,16 +147,11 @@ class _RiskListPageState extends State<RiskListPage> {
                     onRefresh: _refreshRisks,
                     child: ListView(
                       physics: const AlwaysScrollableScrollPhysics(),
-                      children: const <Widget>[
+                      children: <Widget>[
                         SizedBox(height: 140),
-                        Center(
-                          child: Text(
-                            '\u6682\u65E0\u98CE\u9669',
-                            style: TextStyle(
-                              color: Color(0xFF808995),
-                              fontSize: 15,
-                            ),
-                          ),
+                        AppEmptyView(
+                          icon: Icons.warning_amber_outlined,
+                          message: '\u6682\u65E0\u98CE\u9669',
                         ),
                       ],
                     ),

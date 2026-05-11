@@ -1,5 +1,6 @@
 import 'package:emergency_helper/src/core/di/app_dependencies.dart';
 import 'package:emergency_helper/src/core/theme/app_theme.dart';
+import 'package:emergency_helper/src/core/widgets/app_empty_view.dart';
 import 'package:emergency_helper/src/core/widgets/app_loading_overlay.dart';
 import 'package:emergency_helper/src/features/weather/data/event_weather_warning_service.dart';
 import 'package:flutter/material.dart';
@@ -110,14 +111,9 @@ class _WeatherWarningDetailPageState extends State<WeatherWarningDetailPage> {
               )
             : item == null
                 ? const Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.cloud_outlined, size: 44, color: Color(0xFF9AABBF)),
-                        SizedBox(height: 10),
-                        Text('暂无气象预警信息',
-                            style: TextStyle(color: Color(0xFF6F8095), fontSize: 14, fontWeight: FontWeight.w600)),
-                      ],
+                    child: AppEmptyView(
+                      icon: Icons.cloud_outlined,
+                      message: '暂无气象预警信息',
                     ),
                   )
                 : ListView(

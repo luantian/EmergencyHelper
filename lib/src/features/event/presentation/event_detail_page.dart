@@ -6,6 +6,7 @@ import 'package:emergency_helper/src/core/errors/app_exception.dart';
 import 'package:emergency_helper/src/core/media/app_video_player_page.dart';
 import 'package:emergency_helper/src/core/routing/route_paths.dart';
 import 'package:emergency_helper/src/core/widgets/app_center_toast.dart';
+import 'package:emergency_helper/src/core/widgets/app_empty_view.dart';
 import 'package:emergency_helper/src/core/widgets/app_loading_overlay.dart';
 import 'package:emergency_helper/src/features/event/data/event_center.dart';
 import 'package:emergency_helper/src/features/event/presentation/event_transfer_picker_page.dart';
@@ -287,19 +288,50 @@ class _EventDetailPageState extends State<EventDetailPage> {
     if (event == null && _loadError != null) {
       return Center(
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 18),
+          padding: const EdgeInsets.symmetric(horizontal: 24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
-              Text(
-                _loadError!,
-                textAlign: TextAlign.center,
-                style: const TextStyle(color: Color(0xFF5B6776), fontSize: 14),
+              const AppEmptyView(
+                icon: Icons.error_outline_rounded,
+                message: '\u52A0\u8F7D\u5931\u8D25',
               ),
-              const SizedBox(height: 10),
-              ElevatedButton(
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFF6E8),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: const Color(0xFFF2C67A)),
+                ),
+                child: Text(
+                  _loadError!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Color(0xFF8A5A14),
+                    fontSize: 13,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton.icon(
                 onPressed: _loadDetail,
-                child: const Text('\u91CD\u8BD5'),
+                icon: const Icon(Icons.refresh, size: 16),
+                label: const Text('\u91CD\u8BD5'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF2088E8),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 10,
+                  ),
+                  elevation: 0,
+                ),
               ),
             ],
           ),
@@ -307,8 +339,37 @@ class _EventDetailPageState extends State<EventDetailPage> {
       );
     }
     if (event == null) {
-      return const Center(
-        child: Text('\u4E8B\u4EF6\u4E0D\u5B58\u5728\u6216\u5DF2\u5220\u9664'),
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              const AppEmptyView(
+                icon: Icons.event_busy_outlined,
+                message: '\u8BE5\u4E8B\u4EF6\u4E0D\u5B58\u5728\u6216\u5DF2\u88AB\u5220\u9664',
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton.icon(
+                onPressed: () => context.pop(),
+                icon: const Icon(Icons.arrow_back, size: 16),
+                label: const Text('\u8FD4\u56DE'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF2088E8),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 10,
+                  ),
+                  elevation: 0,
+                ),
+              ),
+            ],
+          ),
+        ),
       );
     }
 
