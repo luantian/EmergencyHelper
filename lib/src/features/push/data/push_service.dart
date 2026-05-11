@@ -1110,11 +1110,24 @@ class PushOpenPayload {
       final normalized = cleanedRoute.startsWith('/')
           ? cleanedRoute
           : '/$cleanedRoute';
-      return _normalizeLegacyTrtcRoute(normalized);
+      return _normalizeLegacyTrtcRoute(
+        normalized,
+        eventId: eventId,
+      );
     }
 
     final pageKey = _normalizePageKey(page ?? type ?? '');
     switch (pageKey) {
+      case 'event_notification':
+      case 'event_notify':
+        if (eventId != null && eventId.isNotEmpty) {
+          return RoutePaths.eventDetailById(eventId);
+        }
+        return RoutePaths.eventList;
+      case 'weather_warning':
+      case 'weather_alert':
+      case 'weather_warn':
+        return RoutePaths.weatherWarningList;
       case 'event_detail':
       case 'eventinfo':
       case 'detail':
@@ -1147,6 +1160,10 @@ class PushOpenPayload {
       case 'trtc_invite':
       case 'invite_call':
         return _buildTrtcRoute(payload: payload);
+      case 'incoming_call':
+      case 'call_received':
+      case 'call_incoming':
+        return _buildIncomingCallRoute(payload: payload);
       case 'home':
         return RoutePaths.home;
       default:
@@ -1161,7 +1178,10 @@ class PushOpenPayload {
     return value.trim().toLowerCase().replaceAll('-', '_').replaceAll(' ', '');
   }
 
-  static String _normalizeLegacyTrtcRoute(String route) {
+  static String _normalizeLegacyTrtcRoute(
+    String route, {
+    required String? eventId,
+  }) {
     final normalized = route.trim();
     if (normalized == RoutePaths.trtcCall) {
       return RoutePaths.trtcCallNew;
@@ -1172,6 +1192,19 @@ class PushOpenPayload {
         RoutePaths.trtcCall,
         RoutePaths.trtcCallNew,
       );
+    }
+    // Normalize legacy event-notification route
+    if (normalized == '/event-notification' ||
+        normalized == '/event-notify') {
+      if (eventId != null && eventId.isNotEmpty) {
+        return RoutePaths.eventDetailById(eventId);
+      }
+      return RoutePaths.eventList;
+    }
+    // Normalize legacy weather-warning route
+    if (normalized == '/weather-warning' ||
+        normalized == '/weather-alert') {
+      return RoutePaths.weatherWarningList;
     }
     return normalized;
   }
@@ -1302,6 +1335,40 @@ class PushOpenPayload {
     }
     return Uri(
       path: RoutePaths.trtcCallNew,
+      queryParameters: routeQuery,
+    ).toString();
+  }
+
+  static String _buildIncomingCallRoute({required Map<String, dynamic> payload}) {
+    String? pickText(List<String> keys) {
+      for (final key in keys) {
+        final value = payload[key];
+        if (value is String && value.trim().isNotEmpty) {
+          return value.trim();
+        }
+        if (value != null && value.toString().trim().isNotEmpty) {
+          return value.toString().trim();
+        }
+      }
+      return null;
+    }
+
+    final callId = pickText(<String>['callId', 'call_id', 'rtcCallId']);
+    final callerId = pickText(<String>['callerId', 'fromUserId', 'sponsorUserId']);
+    final callerName = pickText(<String>['callerName', 'fromUserName', 'sponsorUserName']);
+    final mediaType = pickText(<String>['mediaType', 'media_type', 'callType']);
+
+    final routeQuery = <String, String>{};
+    if (callId != null && callId.isNotEmpty) routeQuery['callId'] = callId;
+    if (callerId != null && callerId.isNotEmpty) routeQuery['callerId'] = callerId;
+    if (callerName != null && callerName.isNotEmpty) routeQuery['callerName'] = callerName;
+    if (mediaType != null && mediaType.isNotEmpty) routeQuery['mediaType'] = mediaType;
+
+    if (routeQuery.isEmpty) {
+      return RoutePaths.trtcIncomingCall;
+    }
+    return Uri(
+      path: RoutePaths.trtcIncomingCall,
       queryParameters: routeQuery,
     ).toString();
   }

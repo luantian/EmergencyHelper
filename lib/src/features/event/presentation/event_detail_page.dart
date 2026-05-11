@@ -1137,6 +1137,20 @@ class _EventDetailPageState extends State<EventDetailPage> {
     );
   }
 
+  Widget _buildBrokenThumbSmall() {
+    return Container(
+      width: 36,
+      height: 36,
+      color: const Color(0xFFEFF3F8),
+      alignment: Alignment.center,
+      child: const Icon(
+        Icons.broken_image_outlined,
+        color: Color(0xFF9AA3AE),
+        size: 14,
+      ),
+    );
+  }
+
   Widget _buildTimeline(List<EventTimelineItem> items) {
     if (items.isEmpty) {
       return const Text(
@@ -1248,6 +1262,10 @@ class _EventDetailPageState extends State<EventDetailPage> {
   }
 
   Widget _buildTimelineAttachments(EventTimelineItem item) {
+    // Hide attachments for "已上报" timeline items.
+    if (item.stage == '已上报') {
+      return const SizedBox.shrink();
+    }
     final attachments = _timelineAttachments(item);
     if (attachments.isEmpty) {
       return const SizedBox.shrink();
@@ -1266,84 +1284,116 @@ class _EventDetailPageState extends State<EventDetailPage> {
   }
 
   Widget _buildTimelineAttachmentItem(EventAttachmentPayload attachment) {
-    final rawName = attachment.name.trim();
-    final name = rawName.isEmpty ? '附件文件' : rawName;
-    final source = attachment.path.trim().isNotEmpty
-        ? attachment.path
-        : attachment.name;
-    final resolvedSource = _resolveAttachmentSource(source);
+    final name = attachment.name.trim().isEmpty
+        ? '附件文件'
+        : attachment.name.trim();
+    final resolvedSource = _resolveAttachmentSourceFromPayload(attachment);
     final isImage = _isImageResource(
       name: name,
-      pathOrUrl: resolvedSource ?? source,
+      pathOrUrl: resolvedSource,
       type: attachment.type,
     );
     final isVideo = _isVideoResource(
       name: name,
-      pathOrUrl: resolvedSource ?? source,
+      pathOrUrl: resolvedSource,
       type: attachment.type,
     );
+    final isNetwork =
+        resolvedSource != null && _isNetworkSource(resolvedSource);
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () async {
-        final targetSource = resolvedSource;
-        if (targetSource == null) {
-          _showMessage(
-            '\u9644\u4EF6\u5730\u5740\u65E0\u6548\uFF0C\u65E0\u6CD5\u9884\u89C8',
-          );
+        final source = resolvedSource;
+        if (source == null || source.trim().isEmpty) {
+          _showMessage('附件地址无效，无法预览');
           return;
         }
-        final isNetwork = _isNetworkSource(targetSource);
         if (isImage) {
-          await _showImagePreview(targetSource, name, isNetwork: isNetwork);
+          await _showImagePreview(source, name, isNetwork: isNetwork);
           return;
         }
         if (isVideo) {
           if (isNetwork) {
-            await _showVideoPreviewDialog(targetSource, name);
+            await _showVideoPreviewDialog(source, name);
           } else {
-            await _openAttachment(targetSource, isVideo: true);
+            await _openAttachment(source, isVideo: true);
           }
           return;
         }
-        await _openAttachment(targetSource);
+        await _openAttachment(source);
       },
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+        padding: const EdgeInsets.all(6),
         decoration: BoxDecoration(
-          color: const Color(0xFFF3F8FE),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: const Color(0xFFD5E2F3)),
+          color: const Color(0xFFF7FAFE),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: const Color(0xFFDCE5F1)),
         ),
         child: Row(
           children: <Widget>[
-            Icon(
-              isVideo
-                  ? Icons.play_circle_outline_rounded
-                  : Icons.image_outlined,
-              size: 16,
-              color: const Color(0xFF3D6FA7),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: (isImage && resolvedSource != null)
+                  ? (isNetwork
+                        ? Image.network(
+                            resolvedSource,
+                            width: 36,
+                            height: 36,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, _, _) => _buildBrokenThumbSmall(),
+                          )
+                        : Image.file(
+                            File(resolvedSource),
+                            width: 36,
+                            height: 36,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, _, _) => _buildBrokenThumbSmall(),
+                          ))
+                  : Container(
+                      width: 36,
+                      height: 36,
+                      color: const Color(0xFFEFF3F8),
+                      alignment: Alignment.center,
+                      child: Icon(
+                        isVideo
+                            ? Icons.play_circle_outline_rounded
+                            : Icons.attach_file_rounded,
+                        color: const Color(0xFF5C6F86),
+                        size: 16,
+                      ),
+                    ),
             ),
-            const SizedBox(width: 6),
+            const SizedBox(width: 8),
             Expanded(
-              child: Text(
-                '\u9644\u4EF6\uFF1A$name',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Color(0xFF36516F),
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-            const SizedBox(width: 6),
-            Text(
-              isVideo ? '\u64AD\u653E' : '\u9884\u89C8',
-              style: const TextStyle(
-                color: Color(0xFF2088E8),
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    name,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Color(0xFF1A2330),
+                      fontSize: 12,
+                      height: 1.3,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    isVideo
+                        ? '点击播放视频'
+                        : (isImage
+                              ? '点击查看大图'
+                              : '点击打开附件'),
+                    style: const TextStyle(
+                      color: Color(0xFF2088E8),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -1351,6 +1401,7 @@ class _EventDetailPageState extends State<EventDetailPage> {
       ),
     );
   }
+
 
   List<EventAttachmentPayload> _timelineAttachments(EventTimelineItem item) {
     final result = <EventAttachmentPayload>[];

@@ -243,66 +243,109 @@ class _MessageTabPageState extends State<MessageTabPage>
     final selectedKey = hasSelectedOption
         ? _selectedTypeFilterKey
         : _messageTypeAllKey;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 6),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: const Color(0xFFD5E1EE)),
-        ),
-        child: Row(
-          children: <Widget>[
-            const Text(
-              '\u6D88\u606F\u7B5B\u9009',
-              style: TextStyle(
-                color: Color(0xFF516377),
-                fontSize: 12.5,
-                fontWeight: FontWeight.w600,
+
+    final selectedLabel = options
+        .firstWhere(
+          (option) => option.key == selectedKey,
+          orElse: () => const _MessageTypeFilterOption(
+            key: _messageTypeAllKey,
+            label: '\u5168\u90E8\u6D88\u606F',
+          ),
+        )
+        .label;
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+      child: Row(
+        children: <Widget>[
+          Container(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Colors.white, const Color(0xFFF8FAFD)],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
               ),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: const Color(0xFFDCE8F5),
+                width: 1.2,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: const Color(0xFFDCE8F5).withValues(alpha: 0.4),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ],
             ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<String>(
-                  value: selectedKey,
-                  isExpanded: true,
-                  icon: const Icon(
-                    Icons.keyboard_arrow_down_rounded,
-                    size: 22,
-                    color: Color(0xFF6D7F95),
-                  ),
-                  style: const TextStyle(
-                    color: Color(0xFF1F2E41),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                  dropdownColor: Colors.white,
-                  items: options
-                      .map(
-                        (option) => DropdownMenuItem<String>(
-                          value: option.key,
-                          child: Text(option.label),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: () => _showFilterMenu(options, selectedKey),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF4A90E8),
+                          shape: BoxShape.circle,
                         ),
-                      )
-                      .toList(growable: false),
-                  onChanged: (value) {
-                    if (value == null || value == _selectedTypeFilterKey) {
-                      return;
-                    }
-                    setState(() {
-                      _selectedTypeFilterKey = value;
-                    });
-                  },
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        selectedLabel,
+                        style: const TextStyle(
+                          color: Color(0xFF1B2D45),
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        size: 18,
+                        color: const Color(0xFF6D8499),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
+  }
+
+  void _showFilterMenu(
+    List<_MessageTypeFilterOption> options,
+    String selectedKey,
+  ) {
+    late OverlayEntry overlayEntry;
+    overlayEntry = OverlayEntry(
+      builder: (context) => _FilterMenuOverlay(
+        options: options,
+        selectedKey: selectedKey,
+        onSelected: (key) {
+          overlayEntry.remove();
+          if (key != _selectedTypeFilterKey) {
+            setState(() {
+              _selectedTypeFilterKey = key;
+            });
+          }
+        },
+        onDismiss: () => overlayEntry.remove(),
+      ),
+    );
+
+    Overlay.of(context).insert(overlayEntry);
   }
 
   List<_MessageTypeFilterOption> _buildTypeFilters() {
@@ -318,17 +361,13 @@ class _MessageTabPageState extends State<MessageTabPage>
         key: _messageTypeAllKey,
         label: '\u5168\u90E8\u6D88\u606F',
       ),
-      if (_hasUnread)
-        const _MessageTypeFilterOption(
-          key: _messageUnreadOnlyKey,
-          label: '\u4EC5\u770B\u672A\u8BFB',
-        ),
+      const _MessageTypeFilterOption(
+        key: _messageUnreadOnlyKey,
+        label: '\u4EC5\u770B\u672A\u8BFB',
+      ),
     ];
 
     for (final key in _messageTypeOrder) {
-      if (!keysInList.contains(key)) {
-        continue;
-      }
       options.add(
         _MessageTypeFilterOption(key: key, label: labels[key] ?? key),
       );
@@ -991,4 +1030,204 @@ class _MessageTypeVisualStyle {
   final Color foreground;
   final Color background;
   final Color border;
+}
+
+class _FilterMenuOverlay extends StatefulWidget {
+  final List<_MessageTypeFilterOption> options;
+  final String selectedKey;
+  final void Function(String key) onSelected;
+  final VoidCallback onDismiss;
+
+  const _FilterMenuOverlay({
+    required this.options,
+    required this.selectedKey,
+    required this.onSelected,
+    required this.onDismiss,
+  });
+
+  @override
+  State<_FilterMenuOverlay> createState() => _FilterMenuOverlayState();
+}
+
+class _FilterMenuOverlayState extends State<_FilterMenuOverlay>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _animation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 200),
+    );
+    _animation = CurvedAnimation(
+      parent: _controller,
+      curve: Curves.easeOut,
+    );
+    _controller.forward();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: widget.onDismiss,
+      child: FadeTransition(
+        opacity: _animation,
+        child: Center(
+          child: GestureDetector(
+            onTap: () {},
+            child: Container(
+              width: 280,
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.15),
+                    blurRadius: 20,
+                    offset: const Offset(0, 8),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Header
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFF7FAFF),
+                      borderRadius: BorderRadius.vertical(
+                        top: Radius.circular(16),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(5),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFE8F0FE),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: const Icon(
+                            Icons.filter_list_rounded,
+                            size: 16,
+                            color: Color(0xFF4A90E8),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        const Text(
+                          '消息筛选',
+                          style: TextStyle(
+                            color: Color(0xFF1B2D45),
+                            fontSize: 14.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Divider
+                  const Divider(height: 1, color: Color(0xFFEEF3FA)),
+                  // Options
+                  ...widget.options.map(
+                    (option) => _FilterMenuItem(
+                      label: option.label,
+                      isSelected: option.key == widget.selectedKey,
+                      onTap: () => widget.onSelected(option.key),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FilterMenuItem extends StatefulWidget {
+  final String label;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _FilterMenuItem({
+    required this.label,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  State<_FilterMenuItem> createState() => _FilterMenuItemState();
+}
+
+class _FilterMenuItemState extends State<_FilterMenuItem> {
+  bool _isHovering = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      onEnter: (_) => setState(() => _isHovering = true),
+      onExit: (_) => setState(() => _isHovering = false),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: widget.onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            color: _isHovering
+                ? const Color(0xFFF5F8FC)
+                : Colors.transparent,
+            child: Row(
+              children: [
+                if (widget.isSelected)
+                  const Icon(
+                    Icons.check_rounded,
+                    size: 20,
+                    color: Color(0xFF4A90E8),
+                  )
+                else
+                  const SizedBox(width: 20),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    widget.label,
+                    style: TextStyle(
+                      color: widget.isSelected
+                          ? const Color(0xFF1B2D45)
+                          : const Color(0xFF5A6B7E),
+                      fontSize: 14,
+                      fontWeight: widget.isSelected
+                          ? FontWeight.w600
+                          : FontWeight.w400,
+                    ),
+                  ),
+                ),
+                if (widget.isSelected)
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: const BoxDecoration(
+                      color: Color(0xFF4A90E8),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

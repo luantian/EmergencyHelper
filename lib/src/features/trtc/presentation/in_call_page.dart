@@ -59,6 +59,7 @@ class _InCallPageState extends State<InCallPage> {
   double _smallViewTop = 128.0;
   double _smallViewRight = 20.0;
   bool _isOnlyShowVideoView = false;
+  StreamSubscription<dynamic>? _nativeCallEventSub;
 
   static const double _minSmallViewTop = 100.0;
   static const double _maxSmallViewTopOffset = 216.0;
@@ -111,11 +112,17 @@ class _InCallPageState extends State<InCallPage> {
     CustomCallNavigator.instance.onCallBeginForInCallPage = () {
       _stopRinging();
     };
+
+    // Native EventChannel listener for multi-device call sync.
+    _nativeCallEventSub = const EventChannel(
+      'com.tianyanzhiyun/trtc_call_events',
+    ).receiveBroadcastStream().listen(_onNativeCallEvent);
   }
 
   @override
   void dispose() {
     debugPrint('[TRTC-DEBUG][InCall] dispose: resetting DeviceStore focus');
+    _nativeCallEventSub?.cancel();
     DeviceStore.shared.reset();
     DeviceStore.shared.setFocus(DeviceFocusOwner.none);
     CustomCallNavigator.instance.onCallBeginForInCallPage = null;
@@ -136,6 +143,33 @@ class _InCallPageState extends State<InCallPage> {
       _stopRinging();
       AppCenterToast.show(context, message);
       _handleHangup();
+    }
+  }
+
+  /// Handle native call events from EventChannel (bypasses FFI bug).
+  void _onNativeCallEvent(dynamic event) {
+    if (event is! Map) return;
+    final eventName = event['event'] as String? ?? '';
+    final data = (event['data'] as Map?)?.cast<String, String>() ?? {};
+    final reasonStr = data['reason'] ?? '';
+    final reason = int.tryParse(reasonStr) ?? -1;
+    final reasonName = data['reasonName'] ?? '';
+    debugPrint('[TRTC-DEBUG][InCall] ⚡ native event: $eventName reason=$reason($reasonName)');
+
+    if (eventName == 'onCallNotConnected' || eventName == 'onCallEnd') {
+      String? toastMsg;
+      if (reason == 7 || reasonName == 'otherDeviceAccepted') {
+        toastMsg = '通话已在其他设备接听';
+      } else if (reason == 8 || reasonName == 'otherDeviceReject') {
+        toastMsg = '通话已在其他设备拒绝';
+      } else if (reason == 1 || reasonName == 'hangup') {
+        toastMsg = '对方已挂断通话';
+      }
+      if (toastMsg != null) {
+        _stopRinging();
+        AppCenterToast.show(context, toastMsg);
+        _handleHangup();
+      }
     }
   }
 

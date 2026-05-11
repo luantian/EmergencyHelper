@@ -859,12 +859,11 @@ class TUICallSessionService {
       // Enable multi-device call notification so that when the same user
       // logs in on multiple devices (PC + mobile), all devices receive
       // incoming calls and auto-dismiss when one device answers/hangs up.
-      // TEMPORARILY DISABLED for debugging callee accept issue.
-      debugPrint('[TRTC-DEBUG][Warmup] >>> enabling multi-device ability (DISABLED FOR TESTING)');
-      // final multiDeviceResult = await rtc.TUICallEngine.instance
-      //     .enableMultiDeviceAbility(true)
-      //     .timeout(const Duration(seconds: 10));
-      // debugPrint('[TRTC-DEBUG][Warmup] <<< enableMultiDeviceAbility: code=${multiDeviceResult.code} message=${multiDeviceResult.message}');
+      debugPrint('[TRTC-DEBUG][Warmup] >>> enabling multi-device ability');
+      final multiDeviceResult = await rtc.TUICallEngine.instance
+          .enableMultiDeviceAbility(true)
+          .timeout(const Duration(seconds: 10));
+      debugPrint('[TRTC-DEBUG][Warmup] <<< enableMultiDeviceAbility: code=${multiDeviceResult.code} message=${multiDeviceResult.message}');
 
       dependencies.logger.debug(
         '[TRTC] <<< TUICallEngine.init completed: code=${callKitLoginResult.code} message=${callKitLoginResult.message}',

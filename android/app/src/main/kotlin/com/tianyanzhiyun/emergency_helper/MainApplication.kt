@@ -24,6 +24,7 @@ import com.tencent.cloud.tuikit.engine.call.TUICallDefine
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.FlutterEngineCache
 import io.flutter.embedding.engine.dart.DartExecutor
+import io.flutter.plugin.common.EventChannel
 
 /**
  * Tracks TUICallEngine call state via a native observer.
@@ -35,6 +36,23 @@ object CallStateTracker : TUICallObserver() {
     @Volatile var callState: String = "idle" // idle | incomingRinging | inCall
     @Volatile var registered = false
 
+    /// EventChannel sink to push call events to Flutter
+    private var eventSink: EventChannel.EventSink? = null
+    private var eventChannel: EventChannel? = null
+
+    fun setEventChannel(channel: EventChannel?) {
+        eventChannel = channel
+    }
+
+    fun setEventSink(sink: EventChannel.EventSink?) {
+        eventSink = sink
+    }
+
+    private fun sendEventToFlutter(eventName: String, data: Map<String, String>) {
+        eventSink?.success(mapOf("event" to eventName, "data" to data))
+        Log.d("CallStateTracker", "sendEventToFlutter: $eventName data=$data")
+    }
+
     override fun onCallReceived(
         callId: String,
         userId: String,
@@ -45,6 +63,11 @@ object CallStateTracker : TUICallObserver() {
         currentCallId = callId
         callState = "incomingRinging"
         Log.d("CallStateTracker", "onCallReceived callId=$callId")
+        sendEventToFlutter("onCallReceived", mapOf(
+            "callId" to callId,
+            "userId" to userId,
+            "mediaType" to mediaType.value.toString()
+        ))
     }
 
     override fun onCallBegin(
@@ -54,6 +77,10 @@ object CallStateTracker : TUICallObserver() {
     ) {
         callState = "inCall"
         Log.d("CallStateTracker", "onCallBegin callId=$callId")
+        sendEventToFlutter("onCallBegin", mapOf(
+            "callId" to callId,
+            "mediaType" to mediaType.value.toString()
+        ))
     }
 
     override fun onCallEnd(
@@ -64,9 +91,16 @@ object CallStateTracker : TUICallObserver() {
         totalTime: Long,
         extraInfo: TUICallDefine.CallObserverExtraInfo
     ) {
-        Log.d("CallStateTracker", "onCallEnd callId=$callId reason=$reason")
+        Log.d("CallStateTracker", "onCallEnd callId=$callId reason=$reason(${reason.value})")
         currentCallId = null
         callState = "idle"
+        sendEventToFlutter("onCallEnd", mapOf(
+            "callId" to callId,
+            "reason" to reason.value.toString(),
+            "reasonName" to reason.name,
+            "userId" to userId,
+            "totalTime" to totalTime.toString()
+        ))
     }
 
     override fun onCallNotConnected(
@@ -76,15 +110,22 @@ object CallStateTracker : TUICallObserver() {
         userId: String,
         extraInfo: TUICallDefine.CallObserverExtraInfo
     ) {
-        Log.d("CallStateTracker", "onCallNotConnected callId=$callId reason=$reason")
+        Log.d("CallStateTracker", "onCallNotConnected callId=$callId reason=$reason(${reason.value})")
         currentCallId = null
         callState = "idle"
+        sendEventToFlutter("onCallNotConnected", mapOf(
+            "callId" to callId,
+            "reason" to reason.value.toString(),
+            "reasonName" to reason.name,
+            "userId" to userId
+        ))
     }
 
     override fun onCallCancelled(callId: String) {
         Log.d("CallStateTracker", "onCallCancelled callId=$callId")
         currentCallId = null
         callState = "idle"
+        sendEventToFlutter("onCallCancelled", mapOf("callId" to callId))
     }
 
     fun register(context: android.content.Context) {

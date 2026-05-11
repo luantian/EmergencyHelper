@@ -7,6 +7,7 @@ import android.os.Build
 import android.util.Log
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -60,6 +61,22 @@ class MainActivity : FlutterActivity() {
                 result.notImplemented()
             }
         }
+        // EventChannel: streams native TUICallObserver callbacks to Flutter.
+        // This bypasses the rtc_room_engine FFI bug that doesn't forward
+        // onCallNotConnected events (e.g., otherDeviceAccepted).
+        EventChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.tianyanzhiyun/trtc_call_events"
+        ).setStreamHandler(object : EventChannel.StreamHandler {
+            override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                CallStateTracker.setEventSink(events)
+                Log.d(TAG, "trtc_call_events: Flutter listener attached")
+            }
+            override fun onCancel(arguments: Any?) {
+                CallStateTracker.setEventSink(null)
+                Log.d(TAG, "trtc_call_events: Flutter listener removed")
+            }
+        })
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
             "com.tianyanzhiyun/tuicallkit_login"

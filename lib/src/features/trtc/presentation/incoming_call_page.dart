@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:atomic_x_core/atomicxcore.dart';
+import 'package:emergency_helper/src/core/di/app_dependencies.dart';
 import 'package:emergency_helper/src/core/widgets/app_center_toast.dart';
 import 'package:emergency_helper/src/features/trtc/data/call_phase.dart';
 import 'package:emergency_helper/src/features/trtc/data/tuicall_session_service.dart';
@@ -9,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:provider/provider.dart';
 import 'package:rtc_room_engine/rtc_room_engine.dart' as rtc;
 import 'package:vibration/vibration.dart';
 
@@ -39,6 +41,13 @@ class _IncomingCallPageState extends State<IncomingCallPage>
   Timer? _vibrationTimer;
   Timer? _incomingCallTimeoutTimer;
   Timer? _callStatePollTimer;
+  StreamSubscription<dynamic>? _nativeCallEventSub;
+
+  /// Reason codes from TUICallDefine.CallEndReason (native enum values).
+  static const int _reasonOtherDeviceAccepted = 7;
+  static const int _reasonOtherDeviceReject = 8;
+  static const int _reasonHangup = 1;
+  static const int _reasonReject = 2;
 
   @override
   void initState() {
@@ -64,6 +73,13 @@ class _IncomingCallPageState extends State<IncomingCallPage>
       if (!_isRinging) return;
       _checkNativeCallState();
     });
+    // ⚡ Layer 4: Native EventChannel — bypasses FFI bug entirely.
+    // The native CallStateTracker observer receives onCallNotConnected
+    // reliably and pushes it to Flutter via EventChannel.
+    _nativeCallEventSub = const EventChannel(
+      'com.tianyanzhiyun/trtc_call_events',
+    ).receiveBroadcastStream().listen(_onNativeCallEvent);
+    debugPrint('[TRTC-DEBUG][IncomingCall] native EventChannel listener attached');
     _startRinging();
   }
 
@@ -191,6 +207,8 @@ class _IncomingCallPageState extends State<IncomingCallPage>
     debugPrint('[TRTC-DEBUG][IncomingCall] dispose');
     _stopRinging();
     _incomingCallTimeoutTimer?.cancel();
+    _callStatePollTimer?.cancel();
+    _nativeCallEventSub?.cancel();
     _sessionService.removeCallNotificationListener(_onCallNotification);
     CallStore.shared.state.activeCall.removeListener(_onActiveCallChanged);
     _pulseController.dispose();
@@ -205,6 +223,59 @@ class _IncomingCallPageState extends State<IncomingCallPage>
       if (mounted) {
         AppCenterToast.show(context, message);
         Navigator.of(context).pop();
+      }
+    }
+  }
+
+  /// Handle native call events pushed via EventChannel from CallStateTracker.
+  /// This bypasses the rtc_room_engine FFI bug that doesn't forward
+  /// onCallNotConnected events to Dart.
+  void _onNativeCallEvent(dynamic event) {
+    if (event is! Map) return;
+    final eventName = event['event'] as String? ?? '';
+    final data = (event['data'] as Map?)?.cast<String, String>() ?? {};
+    debugPrint('[TRTC-DEBUG][IncomingCall] ⚡ native event: $eventName data=$data');
+
+    final reasonStr = data['reason'] ?? '';
+    final reason = int.tryParse(reasonStr) ?? -1;
+    final reasonName = data['reasonName'] ?? '';
+
+    if (eventName == 'onCallNotConnected' || eventName == 'onCallEnd') {
+      debugPrint('[TRTC-DEBUG][IncomingCall] ⚡ native $eventName: reason=$reason($reasonName)');
+
+      // Check for multi-device handled
+      if (reason == _reasonOtherDeviceAccepted ||
+          reasonName == 'otherDeviceAccepted') {
+        debugPrint('[TRTC-DEBUG][IncomingCall] ⚡ other device accepted → dismissing');
+        _stopRinging();
+        if (mounted) {
+          AppCenterToast.show(context, '通话已在其他设备接听');
+          Navigator.of(context).pop();
+        }
+        return;
+      }
+
+      if (reason == _reasonOtherDeviceReject ||
+          reasonName == 'otherDeviceReject') {
+        debugPrint('[TRTC-DEBUG][IncomingCall] ⚡ other device rejected → dismissing');
+        _stopRinging();
+        if (mounted) {
+          AppCenterToast.show(context, '通话已在其他设备拒绝');
+          Navigator.of(context).pop();
+        }
+        return;
+      }
+
+      // FFI bug workaround: hangup(1) or reject(2) during incomingRinging
+      // often means other device handled it, NOT caller hangup.
+      if (reason == _reasonHangup || reason == _reasonReject) {
+        debugPrint('[TRTC-DEBUG][IncomingCall] ⚡ hangup/reject during incoming → treating as other device handled');
+        _stopRinging();
+        if (mounted) {
+          AppCenterToast.show(context, '通话已在其他设备处理');
+          Navigator.of(context).pop();
+        }
+        return;
       }
     }
   }
@@ -239,13 +310,18 @@ class _IncomingCallPageState extends State<IncomingCallPage>
       }
     }
 
+    // Cold-start fallback: when app was killed and launched via push notification,
+    // CallStore.activeCall is empty. Use TUICallEngine.join(callId) directly.
+    final activeCall = CallStore.shared.state.activeCall.value;
+    final isColdStart = activeCall.callId.isEmpty && widget.callId.isNotEmpty;
+
+    if (isColdStart) {
+      debugPrint('[TRTC-DEBUG][IncomingCall] cold-start detected, joining via TUICallEngine.join(${widget.callId})');
+      await _handleColdStartAccept();
+      return;
+    }
+
     CallSessionManager.instance.markConnecting();
-    // NOTE: Do NOT call DeviceStore.openLocalCamera here.
-    // The camera is opened by CallParticipantView when the InCallPage renders,
-    // which needs the view to be created for proper video binding.
-    // _CallDeviceStoreImpl.openLocalCamera only updates state without actually
-    // opening the camera hardware, so calling it here sets cameraStatus=on
-    // prematurely and prevents CallParticipantView from opening the real camera.
     debugPrint('[TRTC-DEBUG][IncomingCall] calling CallStore.accept()');
     try {
       final acceptResult = await CallStore.shared.accept().timeout(
@@ -282,6 +358,63 @@ class _IncomingCallPageState extends State<IncomingCallPage>
     // onCallBegin observer will navigate to InCallPage automatically
   }
 
+  /// Cold-start accept: join the call directly via TUICallEngine.
+  Future<void> _handleColdStartAccept() async {
+    final callId = widget.callId;
+    CallSessionManager.instance.markConnecting(callId: callId);
+
+    try {
+      // Ensure logged in before joining
+      final sessionReady = await _sessionService.ensureLoggedIn(
+        dependencies: context.read<AppDependencies>(),
+        roomIdHint: TUICallSessionService.generateRoomId(),
+      );
+      if (!sessionReady.success) {
+        if (!mounted) return;
+        setState(() => _submitting = false);
+        final message = sessionReady.message.isEmpty
+            ? '通话会话初始化失败'
+            : _friendlyError(sessionReady.message);
+        _showMessage(message);
+        _startRinging();
+        return;
+      }
+
+      await rtc.TUICallEngine.instance.join(callId).timeout(
+        const Duration(seconds: 15),
+        onTimeout: () => throw TimeoutException('join() timed out'),
+      );
+      debugPrint('[TRTC-DEBUG][IncomingCall] cold-start join() succeeded');
+    } on TimeoutException {
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      _showMessage('接听超时，请重试');
+      _startRinging();
+    } catch (e) {
+      debugPrint('[TRTC-DEBUG][IncomingCall] cold-start join failed: $e');
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      final message = _friendlyError('接听失败: $e');
+      _showMessage(message);
+      _startRinging();
+    }
+    // onCallBegin observer will navigate to InCallPage automatically
+  }
+
+  String _friendlyError(Object error) {
+    final msg = error.toString();
+    if (msg.contains('timeout') || msg.contains('timed out')) {
+      return '操作超时，请检查网络后重试';
+    }
+    if (msg.contains('network') || msg.contains('connection')) {
+      return '网络连接异常，请检查后重试';
+    }
+    if (msg.contains('login') || msg.contains('session')) {
+      return '登录状态失效，请重新登录';
+    }
+    return msg.length > 100 ? msg.substring(0, 100) : msg;
+  }
+
   Future<void> _handleReject() async {
     if (_submitting) {
       debugPrint('[TRTC-DEBUG][IncomingCall] reject blocked: already submitting');
@@ -290,6 +423,18 @@ class _IncomingCallPageState extends State<IncomingCallPage>
     debugPrint('[TRTC-DEBUG][IncomingCall] >>> reject tapped');
     _stopRinging();
     setState(() => _submitting = true);
+
+    // Cold-start fallback: when app was killed and launched via push notification,
+    // CallStore.activeCall is empty. Reject directly via TUICallEngine.
+    final activeCall = CallStore.shared.state.activeCall.value;
+    final isColdStart = activeCall.callId.isEmpty && widget.callId.isNotEmpty;
+
+    if (isColdStart) {
+      debugPrint('[TRTC-DEBUG][IncomingCall] cold-start reject, calling TUICallEngine.reject(${widget.callId})');
+      await _handleColdStartReject();
+      return;
+    }
+
     // Mark idle BEFORE reject to prevent FFI bug from treating
     // local reject as "other device handled" (onCallNotConnected
     // fires with reject/unknown instead of the true reason).
@@ -304,6 +449,22 @@ class _IncomingCallPageState extends State<IncomingCallPage>
     // Do NOT pop here. The SDK will fire onCallNotConnected(reject)
     // which calls dismissAllCallScreens() to handle navigation.
     // Popping manually + SDK dismissal causes race condition → black screen.
+  }
+
+  /// Cold-start reject: reject the call directly via TUICallEngine.
+  Future<void> _handleColdStartReject() async {
+    try {
+      await rtc.TUICallEngine.instance.reject();
+      debugPrint('[TRTC-DEBUG][IncomingCall] cold-start reject succeeded');
+    } catch (e) {
+      debugPrint('[TRTC-DEBUG][IncomingCall] cold-start reject failed: $e');
+    } finally {
+      CallSessionManager.instance.resetToIdle();
+      if (mounted) {
+        setState(() => _submitting = false);
+        Navigator.of(context).pop();
+      }
+    }
   }
 
   @override

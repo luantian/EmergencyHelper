@@ -27,7 +27,7 @@ import 'package:emergency_helper/src/features/trtc/presentation/incoming_call_pa
 import 'package:emergency_helper/src/features/trtc/presentation/trtc_call_new_page.dart';
 import 'package:emergency_helper/src/features/trtc/presentation/trtc_call_route_extra.dart';
 import 'package:emergency_helper/src/features/weather/presentation/weather_info_page.dart';
-import 'package:emergency_helper/src/features/weather/presentation/weather_warning_list_page.dart';
+import 'package:emergency_helper/src/features/weather/presentation/weather_warning_detail_page.dart';
 import 'package:flutter/widgets.dart';
 import 'package:go_router/go_router.dart';
 
