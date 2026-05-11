@@ -569,32 +569,8 @@ class PushService {
   }
 
   void _onRecvPushMessage(TimPushMessage message) {
-    final payload = <String, dynamic>{};
-    final title = _asText(message.title);
-    final desc = _asText(message.desc);
-    final ext = _asText(message.ext);
-    final messageId = _asText(message.messageID);
-    if (title != null) {
-      payload['title'] = title;
-    }
-    if (desc != null) {
-      payload['desc'] = desc;
-      payload['content'] = desc;
-      payload['message'] = desc;
-    }
-    if (ext != null) {
-      payload['ext'] = ext;
-    }
-    if (messageId != null) {
-      payload['messageID'] = messageId;
-    }
-    if (payload.isEmpty) {
-      return;
-    }
-    unawaited(
-      _showLocalSystemNotification(payload: payload, title: title, body: desc),
-    );
-    _emitIncomingEvent(PushIncomingEventSource.message, payload);
+    // App 活着时不处理推送通知——通话走 IM 信令（onCallReceived），
+    // 事件/预警等通知只在 App 被杀时通过厂商系统通知触达用户。
   }
 
   void _onRevokePushMessage(String messageId) {

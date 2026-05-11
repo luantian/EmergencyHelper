@@ -13,12 +13,24 @@ class CustomCallNavigator {
   /// Number of call pages pushed (IncomingCall + InCall).
   int _callPagesPushed = 0;
 
+  /// When true, suppresses incoming call page auto-push from SDK.
+  /// Used during cold-start join to avoid duplicate IncomingCallPage.
+  bool suppressIncomingPush = false;
+
+  /// When true, shows "通话已结束" toast after dismissAllCallScreens().
+  /// Set by IncomingCallPage cold-start join failure catch block.
+  static bool showCallEndedToast = false;
+
   void navigateToIncomingCall({
     required String callId,
     required String callerId,
     required String callerName,
     required String mediaType,
   }) {
+    if (suppressIncomingPush) {
+      debugPrint('[TRTC-DEBUG][Navigator] navigateToIncomingCall suppressed (cold-start in progress)');
+      return;
+    }
     _callPagesPushed++;
     final context = AppRouter.navigatorKey.currentContext;
     debugPrint('[TRTC-DEBUG][Navigator] navigateToIncomingCall callId=$callId caller=$callerName mediaType=$mediaType context=${context != null ? "OK" : "NULL"}');
@@ -76,6 +88,12 @@ class CustomCallNavigator {
     debugPrint('[TRTC-DEBUG][Navigator] calling _safePopCallPages from dismissAllCallScreens');
     _safePopCallPages(navigator, _callPagesPushed);
     _callPagesPushed = 0;
+
+    // Show call-ended toast after pages are popped (avoids conflict with pop).
+    if (showCallEndedToast) {
+      showCallEndedToast = false;
+      showToast('通话已结束');
+    }
   }
 
   /// Pop call pages from the top of the stack without over-popping.

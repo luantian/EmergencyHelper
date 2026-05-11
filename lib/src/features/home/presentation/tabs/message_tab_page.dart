@@ -349,6 +349,14 @@ class _MessageTabPageState extends State<MessageTabPage>
   }
 
   List<_MessageTypeFilterOption> _buildTypeFilters() {
+    const fallbackLabels = <String, String>{
+      'event_report': '\u4E8B\u4EF6\u4E0A\u62A5',
+      'risk_report': '\u98CE\u9669\u4E0A\u62A5',
+      'event_dynamic': '\u4E8B\u4EF6\u52A8\u6001',
+      'risk_dynamic': '\u98CE\u9669\u52A8\u6001',
+      'weather_warning': '\u6C14\u8C61\u9884\u8B66',
+    };
+
     final labels = <String, String>{};
     final keysInList = <String>{};
     for (final item in _items) {
@@ -369,7 +377,10 @@ class _MessageTabPageState extends State<MessageTabPage>
 
     for (final key in _messageTypeOrder) {
       options.add(
-        _MessageTypeFilterOption(key: key, label: labels[key] ?? key),
+        _MessageTypeFilterOption(
+          key: key,
+          label: labels[key] ?? fallbackLabels[key] ?? key,
+        ),
       );
     }
 
@@ -380,7 +391,10 @@ class _MessageTabPageState extends State<MessageTabPage>
         continue;
       }
       options.add(
-        _MessageTypeFilterOption(key: key, label: labels[key] ?? key),
+        _MessageTypeFilterOption(
+          key: key,
+          label: labels[key] ?? fallbackLabels[key] ?? key,
+        ),
       );
     }
 

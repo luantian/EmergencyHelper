@@ -4,6 +4,7 @@ import 'package:atomic_x_core/atomicxcore.dart';
 import 'package:emergency_helper/src/core/di/app_dependencies.dart';
 import 'package:emergency_helper/src/core/widgets/app_center_toast.dart';
 import 'package:emergency_helper/src/features/trtc/data/call_phase.dart';
+import 'package:emergency_helper/src/features/trtc/data/custom_call_navigator.dart';
 import 'package:emergency_helper/src/features/trtc/data/tuicall_session_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -363,6 +364,9 @@ class _IncomingCallPageState extends State<IncomingCallPage>
     final callId = widget.callId;
     CallSessionManager.instance.markConnecting(callId: callId);
 
+    // Suppress SDK onCallReceived auto-push to avoid duplicate IncomingCallPage.
+    CustomCallNavigator.instance.suppressIncomingPush = true;
+
     try {
       // Ensure logged in before joining
       final sessionReady = await _sessionService.ensureLoggedIn(
@@ -386,17 +390,18 @@ class _IncomingCallPageState extends State<IncomingCallPage>
       );
       debugPrint('[TRTC-DEBUG][IncomingCall] cold-start join() succeeded');
     } on TimeoutException {
+      debugPrint('[TRTC-DEBUG][IncomingCall] cold-start join timeout');
       if (!mounted) return;
       setState(() => _submitting = false);
-      _showMessage('接听超时，请重试');
-      _startRinging();
+      CustomCallNavigator.showCallEndedToast = true;
+      _showMessage('接听超时');
     } catch (e) {
       debugPrint('[TRTC-DEBUG][IncomingCall] cold-start join failed: $e');
       if (!mounted) return;
       setState(() => _submitting = false);
-      final message = _friendlyError('接听失败: $e');
-      _showMessage(message);
-      _startRinging();
+      CustomCallNavigator.showCallEndedToast = true;
+    } finally {
+      CustomCallNavigator.instance.suppressIncomingPush = false;
     }
     // onCallBegin observer will navigate to InCallPage automatically
   }
