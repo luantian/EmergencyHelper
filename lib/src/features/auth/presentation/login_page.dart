@@ -5,6 +5,7 @@ import 'package:emergency_helper/src/core/constants/app_constants.dart';
 import 'package:emergency_helper/src/core/auth/app_feature_permission.dart';
 import 'package:emergency_helper/src/core/di/app_dependencies.dart';
 import 'package:emergency_helper/src/core/errors/app_exception.dart';
+import 'package:emergency_helper/src/core/routing/pending_push_route_store.dart';
 import 'package:emergency_helper/src/core/routing/route_paths.dart';
 import 'package:emergency_helper/src/core/theme/app_theme.dart';
 import 'package:emergency_helper/src/core/widgets/app_center_toast.dart';
@@ -274,7 +275,17 @@ class _LoginPageState extends State<LoginPage> {
           return;
         }
         AppFeaturePermissionResolver.instance.clearCache();
-        context.go(RoutePaths.home);
+        final pendingRoute = PendingPushRouteStore.instance.consume();
+        if (pendingRoute != null) {
+          context.go(RoutePaths.home);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (context.mounted) {
+              context.push(pendingRoute);
+            }
+          });
+        } else {
+          context.go(RoutePaths.home);
+        }
         return;
       }
 
@@ -295,7 +306,17 @@ class _LoginPageState extends State<LoginPage> {
         return;
       }
       AppFeaturePermissionResolver.instance.clearCache();
-      context.go(RoutePaths.home);
+      final pendingRoute = PendingPushRouteStore.instance.consume();
+      if (pendingRoute != null) {
+        context.go(RoutePaths.home);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (context.mounted) {
+            context.push(pendingRoute);
+          }
+        });
+      } else {
+        context.go(RoutePaths.home);
+      }
 
       unawaited(
         _runPostLoginBackgroundJobs(

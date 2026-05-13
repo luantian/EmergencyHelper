@@ -1,9 +1,10 @@
 import 'dart:async';
 
+import 'package:emergency_helper/src/app.dart';
 import 'package:emergency_helper/src/core/di/app_dependencies.dart';
+import 'package:emergency_helper/src/core/routing/pending_push_route_store.dart';
 import 'package:emergency_helper/src/core/routing/route_paths.dart';
 import 'package:emergency_helper/src/features/event/data/event_center.dart';
-import 'package:emergency_helper/src/features/push/data/push_service.dart';
 import 'package:emergency_helper/src/features/risk/data/risk_center.dart';
 import 'package:emergency_helper/src/features/trtc/data/tuicall_session_service.dart';
 import 'package:flutter/material.dart';
@@ -25,6 +26,19 @@ class _SplashPageState extends State<SplashPage> {
   }
 
   Future<void> _bootstrapSession() async {
+    // Wait for full app initialization (push init + pending push handling)
+    // before deciding where to navigate. This ensures PendingPushRouteStore
+    // has already been set by _handlePushOpen if this is a cold-start from
+    // a push notification click. For normal startup this returns immediately
+    // once init completes, so splash navigation is not delayed unnecessarily.
+    final appReady = EmergencyHelperApp.appReady?.call();
+    if (appReady != null) {
+      await appReady;
+    }
+    if (!mounted) {
+      return;
+    }
+
     final dependencies = context.read<AppDependencies>();
     final accessToken = await dependencies.authLocalStore.getAccessToken();
     if (!mounted) {
@@ -76,37 +90,18 @@ class _SplashPageState extends State<SplashPage> {
     if (!mounted) {
       return;
     }
-    context.go(RoutePaths.home);
-    final userIdHint = _extractUserIdFromPermissionInfo(permissionInfo);
-    unawaited(
-      TUICallSessionService.instance.warmupSessionAndPushInBackground(
-        dependencies: dependencies,
-        userIdHint: userIdHint,
-      ),
-    );
-    unawaited(
-      _bindPushAliasInBackground(
-        dependencies: dependencies,
-        permissionInfo: permissionInfo,
-      ),
-    );
-  }
 
-  Future<void> _bindPushAliasInBackground({
-    required AppDependencies dependencies,
-    required Map<String, dynamic>? permissionInfo,
-  }) async {
-    try {
-      await dependencies.pushService.bindAliasFromPermissionInfo(
-        permissionInfo,
-      );
-    } catch (_) {
-      await Future<void>.delayed(const Duration(seconds: 2));
-      try {
-        await dependencies.pushService.bindAliasFromPermissionInfo(
-          permissionInfo,
-        );
-      } catch (_) {}
+    final hasPushRoute = PendingPushRouteStore.instance.peek() != null;
+    debugPrint('[Splash] _bootstrapSession: hasPushRoute=$hasPushRoute');
+    if (hasPushRoute) {
+      // Cold-start with push notification: _navigateByRoutePath in App widget
+      // already handled or will handle navigation. Don't compete with it —
+      // just continue with warmup in background. TRTC warmup and push alias
+      // binding are now handled at App level, so no need to start them here.
+      debugPrint('[Splash] _bootstrapSession: push route detected, skipping navigation (App widget handles it)');
+    } else {
+      debugPrint('[Splash] _bootstrapSession: no push route, going to /home');
+      context.go(RoutePaths.home);
     }
   }
 
@@ -127,10 +122,6 @@ class _SplashPageState extends State<SplashPage> {
           .clearBadgeAndNotifications()
           .timeout(const Duration(seconds: 2), onTimeout: () {});
     } catch (_) {}
-  }
-
-  String? _extractUserIdFromPermissionInfo(Map<String, dynamic>? info) {
-    return PushService.extractAliasFromPermissionInfo(info);
   }
 
   @override

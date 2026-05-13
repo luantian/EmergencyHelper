@@ -144,6 +144,14 @@ class CallSessionManager {
     );
   }
 
+  /// Update callId in current session (e.g., after onCallReceived provides the real ID).
+  void updateCallId(String callId) {
+    if (callId.isNotEmpty && _current.callId != callId) {
+      debugPrint('[CallSessionManager] updating callId: "${_current.callId}" → "$callId"');
+      _current = _current.copyWith(callId: callId);
+    }
+  }
+
   /// Check if the current session matches the given callId.
   bool matchesCallId(String callId) {
     return _current.callId == callId && !_current.isIdle;

@@ -312,8 +312,13 @@ class MainApplication : BmfMapApplication() {
         if (TUIConstants.TIMPush.EVENT_NOTIFY == key &&
             TUIConstants.TIMPush.EVENT_NOTIFY_NOTIFICATION == subKey
         ) {
+            Log.d(TAG, "[PUSH-DIAG] notifyNotificationClicked: key=$key, subKey=$subKey")
+            Log.d(TAG, "[PUSH-DIAG] param keys=${param?.keys}")
+            param?.forEach { (k, v) ->
+                Log.d(TAG, "[PUSH-DIAG] param[$k] = $v")
+            }
             val extString = param?.get(TUIConstants.TUIOfflinePush.NOTIFICATION_EXT_KEY) as? String
-            Log.d(TAG, "notifyNotificationClicked: ext=$extString")
+            Log.d(TAG, "[PUSH-DIAG] extString = $extString")
             scheduleCheckPluginAndNotify(Extras.ON_NOTIFICATION_CLICKED, extString ?: "")
         }
     }

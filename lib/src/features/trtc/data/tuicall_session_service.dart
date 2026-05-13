@@ -59,6 +59,17 @@ class TUICallSessionService {
   V2TimAdvancedMsgListener? _imSignalingListener;
   final Set<String> _handledCallIds = {};
 
+  /// Set to true when the local user actively rejects a call.
+  /// Prevents the observer from showing a "通话被拒绝" toast on the callee's
+  /// own device (the local UI already handles dismissal).
+  bool _isLocalRejection = false;
+
+  /// Mark whether the local device is actively rejecting a call.
+  /// Called by IncomingCallPage before/after CallStore.shared.reject().
+  void markLocalRejection(bool value) {
+    _isLocalRejection = value;
+  }
+
   /// Register listener to receive multi-device call sync events.
   void addCallNotificationListener(void Function(String) listener) {
     _callNotificationListeners.add(listener);
@@ -97,8 +108,11 @@ class TUICallSessionService {
     }
   }
 
+  AppDependencies? _observerDependencies;
+
   /// Initialize global call observer. Should be called once after login.
-  void initCallObserver() {
+  void initCallObserver({AppDependencies? dependencies}) {
+    _observerDependencies = dependencies;
     if (_globalCallObserver != null) {
       disposeCallObserver();
     }
@@ -109,16 +123,50 @@ class TUICallSessionService {
           'callerId=$callerId mediaType=$mediaType calleeList=$calleeIdList',
         );
         final mediaStr = _mediaTypeToString(mediaType);
+        final sessionBefore = CallSessionManager.instance.current;
+        debugPrint('[TRTC-DEBUG][Observer] onCallReceived currentPhase=${sessionBefore.phase}');
+
+        // If we are the caller (outgoingRinging), update callId and send push
+        // with real callId so cold-starting callees can join the active call.
+        if (sessionBefore.phase == CallPhase.outgoingRinging) {
+          debugPrint('[TRTC-DEBUG][Observer] onCallReceived on caller side, updating callId=$callId');
+          CallSessionManager.instance.updateCallId(callId);
+          final selfId = instance.activeUserId;
+          final callerName = _resolveCallerNameForPush(selfId);
+          for (final calleeId in calleeIdList) {
+            if (calleeId == selfId) continue;
+            unawaited(_sendMissedCallPushNotification(
+              calleeUserId: calleeId,
+              callerId: selfId,
+              callerName: callerName,
+              callId: callId,
+              mediaType: sessionBefore.mediaType,
+            ));
+          }
+          // Don't create incoming call session on caller side.
+          return;
+        }
+
+        // If already on an incoming call screen (stale state from a previous
+        // uncleaned call), dismiss it and reset to idle before navigating
+        // to the new incoming call.
+        if (sessionBefore.phase == CallPhase.incomingRinging) {
+          debugPrint('[TRTC-DEBUG][Observer] onCallReceived: stale incomingRinging state, dismissing first');
+          CallSessionManager.instance.resetToIdle();
+          CustomCallNavigator.instance.dismissAllCallScreens();
+        }
+
         CallSessionManager.instance.markIncomingCall(
           callId: callId,
           callerId: callerId,
           mediaType: mediaStr,
         );
         // Navigate to custom incoming call UI.
-        final callerName = _resolveCallerName(callerId);
+        // Priority: info.userData (from TUICallParams) > ParticipantNameRegistry > CallStore > callerId
+        final callerName = _resolveCallerName(callerId, info);
         // Register caller name for display in call UI
         ParticipantNameRegistry.register(callerId, callerName);
-        debugPrint('[TRTC-DEBUG][Observer] navigating to trtcIncomingCall for callId=$callId');
+        debugPrint('[TRTC-DEBUG][Observer] navigating to trtcIncomingCall for callId=$callId, callerName=$callerName');
         CustomCallNavigator.instance.navigateToIncomingCall(
           callId: callId,
           callerId: callerId,
@@ -181,6 +229,12 @@ class TUICallSessionService {
             } else {
               CallSessionManager.instance.resetToIdle();
               CustomCallNavigator.instance.dismissAllCallScreens();
+              // If this device actively rejected the call, skip the toast —
+              // the local UI in IncomingCallPage already handles dismissal.
+              if (_isLocalRejection) {
+                debugPrint('[TRTC-DEBUG][Observer] local rejection, skipping toast');
+                return;
+              }
               if (reason == rtc.CallEndReason.unknown) {
                 debugPrint('[TRTC-DEBUG][Observer] real unknown, ignoring');
                 _notifyCall('通话未接通');
@@ -210,12 +264,72 @@ class TUICallSessionService {
             break;
           case rtc.CallEndReason.noResponse:
             debugPrint('[TRTC-DEBUG][Observer] branch: noResponse');
+            // Cold-start scenario: user clicked push notification but by the
+            // time warmup completed and observer registered, the call had
+            // already timed out. Show "call ended" toast.
+            if (wasIncomingRinging) {
+              debugPrint('[TRTC-DEBUG][Observer] noResponse during incomingRinging → call expired before user could answer');
+              _notifyCall('通话已结束');
+              CallSessionManager.instance.resetToIdle();
+              CustomCallNavigator.instance.dismissAllCallScreens();
+              break;
+            }
+            // Cold-start from push: warmup completed after call already expired,
+            // phase is still idle. Show "call ended" toast.
+            if (sessionBefore.phase == CallPhase.idle) {
+              debugPrint('[TRTC-DEBUG][Observer] noResponse on cold-start (idle phase) → call expired before warmup completed');
+              CustomCallNavigator.showCallEndedToast = true;
+              CustomCallNavigator.instance.dismissAllCallScreens();
+              break;
+            }
+            // If this device was the caller (outgoingRinging), send a missed
+            // call push notification to the callee.
+            // Note: markOutgoingCall sets callId='' because SDK hasn't assigned
+            // one yet, so we only check phase, not callId match.
+            if (sessionBefore.phase == CallPhase.outgoingRinging) {
+              debugPrint('[TRTC-DEBUG][Observer] noResponse on caller side, sending missed call push');
+              final calleeIds = sessionBefore.inviteeIds;
+              if (calleeIds.isNotEmpty) {
+                final selfId = instance.activeUserId;
+                final callerName = _resolveCallerNameForPush(selfId);
+                for (final calleeId in calleeIds) {
+                  unawaited(_sendMissedCallPushNotification(
+                    calleeUserId: calleeId,
+                    callerId: selfId,
+                    callerName: callerName,
+                    callId: callId,
+                    mediaType: sessionBefore.mediaType,
+                  ));
+                }
+              }
+            }
             _notifyCall('对方无应答');
             CallSessionManager.instance.resetToIdle();
             CustomCallNavigator.instance.dismissAllCallScreens();
             break;
           case rtc.CallEndReason.lineBusy:
             debugPrint('[TRTC-DEBUG][Observer] branch: lineBusy');
+            // If this device was the caller (outgoingRinging), send a missed
+            // call push notification to the callee.
+            // Note: markOutgoingCall sets callId='' because SDK hasn't assigned
+            // one yet, so we only check phase, not callId match.
+            if (sessionBefore.phase == CallPhase.outgoingRinging) {
+              debugPrint('[TRTC-DEBUG][Observer] lineBusy on caller side, sending missed call push');
+              final calleeIds = sessionBefore.inviteeIds;
+              if (calleeIds.isNotEmpty) {
+                final selfId = instance.activeUserId;
+                final callerName = _resolveCallerNameForPush(selfId);
+                for (final calleeId in calleeIds) {
+                  unawaited(_sendMissedCallPushNotification(
+                    calleeUserId: calleeId,
+                    callerId: selfId,
+                    callerName: callerName,
+                    callId: callId,
+                    mediaType: sessionBefore.mediaType,
+                  ));
+                }
+              }
+            }
             _notifyCall('对方正忙');
             CallSessionManager.instance.resetToIdle();
             CustomCallNavigator.instance.dismissAllCallScreens();
@@ -278,6 +392,27 @@ class TUICallSessionService {
           case rtc.CallEndReason.lineBusy:
           case rtc.CallEndReason.otherDeviceReject:
             debugPrint('[TRTC-DEBUG][Observer] onCallEnd branch: lineBusy/otherDeviceReject');
+            // If this device was the caller, send a missed call push.
+            // Note: markOutgoingCall sets callId='' because SDK hasn't assigned
+            // one yet, so we only check phase, not callId match.
+            if (sessionBefore.phase == CallPhase.outgoingRinging) {
+              debugPrint('[TRTC-DEBUG][Observer] lineBusy on caller side in onCallEnd, sending missed call push');
+              final session = CallSessionManager.instance.current;
+              final calleeIds = session.inviteeIds;
+              if (calleeIds.isNotEmpty) {
+                final selfId = instance.activeUserId;
+                final callerName = _resolveCallerNameForPush(selfId);
+                for (final calleeId in calleeIds) {
+                  unawaited(_sendMissedCallPushNotification(
+                    calleeUserId: calleeId,
+                    callerId: selfId,
+                    callerName: callerName,
+                    callId: callId,
+                    mediaType: session.mediaType,
+                  ));
+                }
+              }
+            }
             _notifyCall('对方正忙');
             CallSessionManager.instance.resetToIdle();
             CustomCallNavigator.instance.dismissAllCallScreens();
@@ -452,7 +587,20 @@ class TUICallSessionService {
     return str.contains('video') ? 'video' : 'audio';
   }
 
-  String _resolveCallerName(String callerId) {
+  String _resolveCallerName(String callerId, [dynamic info]) {
+    // 0. Try info.userData (from TUICallParams.userData set by caller).
+    // This is the most reliable source — it contains the callerName we set
+    // when initiating the call, available even on cold-start.
+    try {
+      final userData = info?.userData as String?;
+      if (userData != null && userData.isNotEmpty) {
+        final data = jsonDecode(userData) as Map<String, dynamic>;
+        final name = _asText(data['callerName']);
+        if (name != null && name.isNotEmpty) {
+          return name;
+        }
+      }
+    } catch (_) {}
     // 1. Try ParticipantNameRegistry (preloaded from contacts API).
     final registered = ParticipantNameRegistry.resolve(callerId);
     if (registered.isNotEmpty) return registered;
@@ -494,6 +642,8 @@ class TUICallSessionService {
         count++;
       }
       debugPrint('[TRTC-Session] preloaded $count contact names into ParticipantNameRegistry');
+      // Persist to SharedPreferences for cold-start name resolution.
+      unawaited(ParticipantNameRegistry.saveToCache());
     } catch (e) {
       debugPrint('[TRTC-Session] preload contact names failed: $e');
     }
@@ -856,6 +1006,20 @@ class TUICallSessionService {
         );
       }
 
+      // ✅ Register observer IMMEDIATELY after engine init — the SDK may
+      // replay pending call events (onCallReceived) as soon as the IM session
+      // is established. Delaying observer registration until after warmup
+      // causes these events to be missed on cold-start.
+      try {
+        initCallObserver(dependencies: dependencies);
+      } catch (error, stackTrace) {
+        dependencies.logger.error(
+          'initCallObserver threw',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+
       // Enable multi-device call notification so that when the same user
       // logs in on multiple devices (PC + mobile), all devices receive
       // incoming calls and auto-dismiss when one device answers/hangs up.
@@ -881,16 +1045,9 @@ class TUICallSessionService {
       _activeUserSig = userSigInfo.userSig;
       _activeUserSigFetchedAt = DateTime.now();
 
-      // ✅ Register observer AFTER login success — native layer must be ready
-      try {
-        initCallObserver();
-      } catch (error, stackTrace) {
-        dependencies.logger.error(
-          'initCallObserver threw',
-          error: error,
-          stackTrace: stackTrace,
-        );
-      }
+      // ✅ Restore cached contact names (already done before observer registration
+      // above, but keep this as a safety net for warm-start scenarios).
+      unawaited(ParticipantNameRegistry.loadFromCache());
 
       // Set self info is best-effort — TUICallKit.setSelfInfo has a known null
       // check bug (TUICallKitImpl line 118) that crashes on empty avatar.
@@ -1131,6 +1288,207 @@ class TUICallSessionService {
     return '$prefix***$suffix(${value.length})';
   }
 
+  /// Resolve caller name for display (used by observer callbacks).
+  String _resolveCallerNameForPush(String callerId) {
+    final registered = ParticipantNameRegistry.resolve(callerId);
+    if (registered.isNotEmpty) return registered;
+    try {
+      final participants = CallStore.shared.state.allParticipants.value;
+      for (final p in participants) {
+        if (p.id == callerId) {
+          final name = p.remark.isNotEmpty ? p.remark : p.name;
+          if (name.isNotEmpty) return name;
+        }
+      }
+    } catch (_) {}
+    return callerId;
+  }
+
+  /// Send a missed call push notification to the callee when the caller's
+  /// call was not answered (timeout or busy). Only called from the caller side.
+  Future<void> _sendMissedCallPushNotification({
+    required String calleeUserId,
+    required String callerId,
+    required String callerName,
+    required String callId,
+    required String mediaType,
+  }) async {
+    final deps = _observerDependencies;
+    if (deps == null) {
+      debugPrint('[TRTC-MissedCallPush] skip: no observer dependencies');
+      return;
+    }
+    try {
+      final mediaLabel = mediaType == 'video' ? '视频' : '语音';
+      final title = '${mediaLabel}邀请';
+      final content = '$callerName发来$mediaLabel通话请求，请查看';
+      final ext = jsonEncode(<String, dynamic>{
+        'page': 'incoming_call',
+        'callId': callId,
+        'callerId': callerId,
+        'callerName': callerName,
+        'mediaType': mediaType,
+      });
+      final androidInfo = jsonEncode(<String, dynamic>{
+        // Huawei
+        'HuaweiImportance': 'HIGH',
+        'HuaweiCategory': 'VOIP',
+        // Honor
+        'HonorImportance': 'HIGH',
+        'HonorCategory': 'VOIP',
+        // Xiaomi
+        'XiaomiCategory': 'VOIP',
+        // OPPO
+        'OppoCategory': 'VOIP',
+        // Vivo
+        'VivoCategory': 'VOIP',
+        // Google FCM
+        'GooglePriority': 'HIGH',
+      });
+
+      debugPrint(
+        '[TRTC-MissedCallPush] sending to callee=$calleeUserId '
+        'title=$title mediaType=$mediaType',
+      );
+
+      final response = await deps.apiClient.postJson(
+        '/admin-api/api/trtc/sendToUserNotify',
+        queryParameters: <String, dynamic>{
+          'userIdList': calleeUserId,
+          'title': title,
+          'content': content,
+          'ext': ext,
+          'androidInfo': androidInfo,
+        },
+      );
+
+      final code = _asInt(response['code']) ?? -1;
+      if (code == 0) {
+        debugPrint('[TRTC-MissedCallPush] sent successfully');
+      } else {
+        debugPrint('[TRTC-MissedCallPush] server returned code=$code');
+      }
+    } catch (e) {
+      debugPrint('[TRTC-MissedCallPush] failed: $e');
+    }
+  }
+
+  /// Check online status for given user IDs via IM SDK.
+  /// Returns a map of userId -> statusType (0=unknown, 1=online, 2=offline, 3=unlogged).
+  /// Returns empty map on failure (caller should treat as "possibly online").
+  Future<Map<String, int>> checkUsersOnlineStatus(
+    List<String> userIds,
+  ) async {
+    if (userIds.isEmpty) return const <String, int>{};
+    try {
+      final result = await TencentImSDKPlugin.v2TIMManager
+          .getUserStatus(userIDList: userIds)
+          .timeout(const Duration(seconds: 3));
+      if (result.code != 0) {
+        debugPrint('[TRTC-OnlineStatus] getUserStatus failed: code=${result.code}');
+        return const <String, int>{};
+      }
+      final statusList = result.data ?? [];
+      final map = <String, int>{};
+      for (final s in statusList) {
+        map[s.userID ?? ''] = s.statusType ?? 0;
+      }
+      debugPrint(
+        '[TRTC-OnlineStatus] ${map.length}/${userIds.length} users checked: '
+        '${map.entries.map((e) => '${e.key}=${e.value}').join(', ')}',
+      );
+      return map;
+    } catch (e) {
+      debugPrint('[TRTC-OnlineStatus] getUserStatus error: $e');
+      return const <String, int>{};
+    }
+  }
+
+  /// Send an offline push notification immediately when all targets are offline.
+  /// Used as a fast path before attempting TRTC call.
+  /// Send an offline push notification for a call invite.
+  /// If callId is empty, reads from CallSessionManager (populated by SDK observer).
+  /// Falls back to a generated UUID if still unavailable.
+  Future<void> sendOfflineCallPushNotification({
+    required List<String> calleeUserIds,
+    required String callerId,
+    required String callerName,
+    required String mediaType, // 'video' or 'audio'
+    String callId = '',
+  }) async {
+    final deps = _observerDependencies;
+    if (deps == null) {
+      debugPrint('[TRTC-OfflinePush] skip: no observer dependencies');
+      return;
+    }
+    if (calleeUserIds.isEmpty) return;
+
+    // Resolve callId: parameter > CallSessionManager > generated UUID
+    var resolvedCallId = callId;
+    if (resolvedCallId.isEmpty) {
+      resolvedCallId = CallSessionManager.instance.current.callId;
+    }
+    if (resolvedCallId.isEmpty) {
+      resolvedCallId = _generateUuid();
+      debugPrint('[TRTC-OfflinePush] generated fallback callId=$resolvedCallId');
+    }
+
+    try {
+      final mediaLabel = mediaType == 'video' ? '视频' : '语音';
+      final title = '${mediaLabel}邀请';
+      final content = '$callerName发来$mediaLabel通话请求，请查看';
+      final ext = jsonEncode(<String, dynamic>{
+        'page': 'incoming_call',
+        'callId': resolvedCallId,
+        'callerId': callerId,
+        'callerName': callerName,
+        'mediaType': mediaType,
+      });
+      final androidInfo = jsonEncode(<String, dynamic>{
+        // Huawei
+        'HuaweiImportance': 'HIGH',
+        'HuaweiCategory': 'VOIP',
+        // Honor
+        'HonorImportance': 'HIGH',
+        'HonorCategory': 'VOIP',
+        // Xiaomi
+        'XiaomiCategory': 'VOIP',
+        // OPPO
+        'OppoCategory': 'VOIP',
+        // Vivo
+        'VivoCategory': 'VOIP',
+        // Google FCM
+        'GooglePriority': 'HIGH',
+      });
+
+      final userIdStr = calleeUserIds.join(',');
+      debugPrint(
+        '[TRTC-OfflinePush] sending to ${calleeUserIds.length} users: $userIdStr '
+        'title=$title mediaType=$mediaType',
+      );
+
+      final response = await deps.apiClient.postJson(
+        '/admin-api/api/trtc/sendToUserNotify',
+        queryParameters: <String, dynamic>{
+          'userIdList': userIdStr,
+          'title': title,
+          'content': content,
+          'ext': ext,
+          'androidInfo': androidInfo,
+        },
+      );
+
+      final code = _asInt(response['code']) ?? -1;
+      if (code == 0) {
+        debugPrint('[TRTC-OfflinePush] sent successfully to $userIdStr');
+      } else {
+        debugPrint('[TRTC-OfflinePush] server returned code=$code');
+      }
+    } catch (e) {
+      debugPrint('[TRTC-OfflinePush] failed: $e');
+    }
+  }
+
   String? _extractNickname(Map<String, dynamic>? sessionInfo) {
     if (sessionInfo == null || sessionInfo.isEmpty) {
       return null;
@@ -1208,6 +1566,22 @@ class TUICallSessionService {
       return null;
     }
     return text;
+  }
+
+  static String _generateUuid() {
+    final r = Random.secure();
+    final bytes = List<int>.generate(16, (_) => r.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+    bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 1
+    return '${_hex(bytes, 0, 4)}-${_hex(bytes, 4, 2)}-${_hex(bytes, 6, 2)}-${_hex(bytes, 8, 2)}-${_hex(bytes, 10, 6)}';
+  }
+
+  static String _hex(List<int> bytes, int offset, int count) {
+    final buf = StringBuffer();
+    for (var i = 0; i < count; i++) {
+      buf.write('${bytes[offset + i].toRadixString(16).padLeft(2, '0')}');
+    }
+    return buf.toString();
   }
 }
 

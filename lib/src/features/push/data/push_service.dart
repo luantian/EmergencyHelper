@@ -517,7 +517,7 @@ class PushService {
     String? groupID,
   }) {
     _logger.info(
-      'push notification clicked: ext=$ext, userID=$userID, groupID=$groupID',
+      '[PUSH-DIAG] _onNotificationClicked: ext=$ext, userID=$userID, groupID=$groupID',
     );
     Map<String, dynamic> payload;
     try {
@@ -529,7 +529,16 @@ class PushService {
     } catch (_) {
       payload = {'ext': ext, 'userID': userID, 'groupID': groupID};
     }
+    _logger.info(
+      '[PUSH-DIAG] decoded payload keys=${payload.keys.toList()}',
+    );
+    payload.forEach((key, value) {
+      _logger.info('[PUSH-DIAG] payload[$key] = $value');
+    });
     final openPayload = PushOpenPayload.fromEvent(payload);
+    _logger.info(
+      '[PUSH-DIAG] PushOpenPayload: routePath=${openPayload.routePath}, eventId=${openPayload.eventId}, page=${openPayload.page}, type=${openPayload.type}',
+    );
     if (_openPayloadController.hasListener) {
       _pendingOpenPayload = null;
       _openPayloadController.add(openPayload);
@@ -569,8 +578,32 @@ class PushService {
   }
 
   void _onRecvPushMessage(TimPushMessage message) {
-    // App 活着时不处理推送通知——通话走 IM 信令（onCallReceived），
-    // 事件/预警等通知只在 App 被杀时通过厂商系统通知触达用户。
+    final payload = <String, dynamic>{};
+    final title = _asText(message.title);
+    final desc = _asText(message.desc);
+    final ext = _asText(message.ext);
+    final messageId = _asText(message.messageID);
+    if (title != null) {
+      payload['title'] = title;
+    }
+    if (desc != null) {
+      payload['desc'] = desc;
+      payload['content'] = desc;
+      payload['message'] = desc;
+    }
+    if (ext != null) {
+      payload['ext'] = ext;
+    }
+    if (messageId != null) {
+      payload['messageID'] = messageId;
+    }
+    if (payload.isEmpty) {
+      return;
+    }
+    unawaited(
+      _showLocalSystemNotification(payload: payload, title: title, body: desc),
+    );
+    _emitIncomingEvent(PushIncomingEventSource.message, payload);
   }
 
   void _onRevokePushMessage(String messageId) {
@@ -1065,7 +1098,6 @@ class PushOpenPayload {
         eventId: eventId,
         page: page,
         type: type,
-        payload: merged,
       ),
       eventId: eventId,
       page: page,
@@ -1079,7 +1111,6 @@ class PushOpenPayload {
     required String? eventId,
     required String? page,
     required String? type,
-    required Map<String, dynamic> payload,
   }) {
     final cleanedRoute = rawRoute?.trim();
     if (cleanedRoute != null && cleanedRoute.isNotEmpty) {
@@ -1096,6 +1127,10 @@ class PushOpenPayload {
     switch (pageKey) {
       case 'event_notification':
       case 'event_notify':
+      case 'event_create':
+      case 'event_close':
+      case 'event_transfer':
+      case 'event_feedback':
         if (eventId != null && eventId.isNotEmpty) {
           return RoutePaths.eventDetailById(eventId);
         }
@@ -1112,7 +1147,6 @@ class PushOpenPayload {
           return RoutePaths.eventDetailById(eventId);
         }
         return RoutePaths.eventList;
-      case 'event_feedback':
       case 'feedback':
         if (eventId != null && eventId.isNotEmpty) {
           return RoutePaths.eventFeedbackById(eventId);
@@ -1135,11 +1169,15 @@ class PushOpenPayload {
       case 'call_invite':
       case 'trtc_invite':
       case 'invite_call':
-        return _buildTrtcRoute(payload: payload);
       case 'incoming_call':
       case 'call_received':
       case 'call_incoming':
-        return _buildIncomingCallRoute(payload: payload);
+        // TRTC call routes are handled by SDK observer (onCallReceived),
+        // never navigated directly via GoRouter.
+        if (eventId != null && eventId.isNotEmpty) {
+          return RoutePaths.eventDetailById(eventId);
+        }
+        return RoutePaths.home;
       case 'home':
         return RoutePaths.home;
       default:
@@ -1159,16 +1197,6 @@ class PushOpenPayload {
     required String? eventId,
   }) {
     final normalized = route.trim();
-    if (normalized == RoutePaths.trtcCall) {
-      return RoutePaths.trtcCallNew;
-    }
-    final oldPrefix = '${RoutePaths.trtcCall}?';
-    if (normalized.startsWith(oldPrefix)) {
-      return normalized.replaceFirst(
-        RoutePaths.trtcCall,
-        RoutePaths.trtcCallNew,
-      );
-    }
     // Normalize legacy event-notification route
     if (normalized == '/event-notification' ||
         normalized == '/event-notify') {
@@ -1183,170 +1211,6 @@ class PushOpenPayload {
       return RoutePaths.weatherWarningList;
     }
     return normalized;
-  }
-
-  static String _buildTrtcRoute({required Map<String, dynamic> payload}) {
-    String? asCsvText(Object? value) {
-      if (value is List) {
-        final values = value
-            .map(_asText)
-            .whereType<String>()
-            .map((item) => item.trim())
-            .where((item) => item.isNotEmpty)
-            .toList(growable: false);
-        if (values.isEmpty) {
-          return null;
-        }
-        return values.join(',');
-      }
-      if (value is Set) {
-        final values = value
-            .map(_asText)
-            .whereType<String>()
-            .map((item) => item.trim())
-            .where((item) => item.isNotEmpty)
-            .toList(growable: false);
-        if (values.isEmpty) {
-          return null;
-        }
-        return values.join(',');
-      }
-      return _asText(value);
-    }
-
-    String? pickText(List<String> keys) {
-      for (final key in keys) {
-        final value = asCsvText(payload[key]);
-        if (value != null && value.isNotEmpty) {
-          return value;
-        }
-      }
-      return null;
-    }
-
-    String? normalizeBool(String? raw, {required String fallback}) {
-      if (raw == null || raw.trim().isEmpty) {
-        return null;
-      }
-      final normalized = raw.trim().toLowerCase();
-      if (normalized == '1' ||
-          normalized == 'true' ||
-          normalized == 'yes' ||
-          normalized == 'y' ||
-          normalized == 'on') {
-        return '1';
-      }
-      if (normalized == '0' ||
-          normalized == 'false' ||
-          normalized == 'no' ||
-          normalized == 'n' ||
-          normalized == 'off') {
-        return '0';
-      }
-      return fallback;
-    }
-
-    final roomId = pickText(<String>[
-      'roomId',
-      'room_id',
-      'rtcRoomId',
-      'trtcRoomId',
-    ]);
-    final callId = pickText(<String>[
-      'callId',
-      'call_id',
-      'rtcCallId',
-      'trtcCallId',
-    ]);
-    final callerId = pickText(<String>[
-      'callerId',
-      'fromUserId',
-      'sponsorUserId',
-    ]);
-    final callerName = pickText(<String>[
-      'callerName',
-      'fromUserName',
-      'sponsorUserName',
-    ]);
-    final targetUserIds = pickText(<String>[
-      'calleeUserIds',
-      'targetUserIds',
-      'participantIds',
-      'inviteeIds',
-      'userIds',
-    ]);
-    final targetNames = pickText(<String>[
-      'calleeNames',
-      'targetUserNames',
-      'participantNames',
-    ]);
-    final routeQuery = <String, String>{};
-    if (callId != null && callId.isNotEmpty) {
-      routeQuery['callId'] = callId;
-    }
-    if (roomId != null && roomId.isNotEmpty) {
-      routeQuery['roomId'] = roomId;
-    }
-    if (callerId != null && callerId.isNotEmpty) {
-      routeQuery['callerId'] = callerId;
-    }
-    if (callerName != null && callerName.isNotEmpty) {
-      routeQuery['callerName'] = callerName;
-    }
-    if (targetUserIds != null && targetUserIds.isNotEmpty) {
-      routeQuery['calleeUserIds'] = targetUserIds;
-    }
-    if (targetNames != null && targetNames.isNotEmpty) {
-      routeQuery['calleeNames'] = targetNames;
-    }
-    final normalizedAutoJoin = normalizeBool(
-      pickText(<String>['autoJoin', 'autoEnter', 'joinDirectly']),
-      fallback: callId != null && callId.isNotEmpty ? '1' : '0',
-    );
-    if (normalizedAutoJoin != null && normalizedAutoJoin.isNotEmpty) {
-      routeQuery['autoJoin'] = normalizedAutoJoin;
-    }
-    if (routeQuery.isEmpty) {
-      return RoutePaths.trtcCallNew;
-    }
-    return Uri(
-      path: RoutePaths.trtcCallNew,
-      queryParameters: routeQuery,
-    ).toString();
-  }
-
-  static String _buildIncomingCallRoute({required Map<String, dynamic> payload}) {
-    String? pickText(List<String> keys) {
-      for (final key in keys) {
-        final value = payload[key];
-        if (value is String && value.trim().isNotEmpty) {
-          return value.trim();
-        }
-        if (value != null && value.toString().trim().isNotEmpty) {
-          return value.toString().trim();
-        }
-      }
-      return null;
-    }
-
-    final callId = pickText(<String>['callId', 'call_id', 'rtcCallId']);
-    final callerId = pickText(<String>['callerId', 'fromUserId', 'sponsorUserId']);
-    final callerName = pickText(<String>['callerName', 'fromUserName', 'sponsorUserName']);
-    final mediaType = pickText(<String>['mediaType', 'media_type', 'callType']);
-
-    final routeQuery = <String, String>{};
-    if (callId != null && callId.isNotEmpty) routeQuery['callId'] = callId;
-    if (callerId != null && callerId.isNotEmpty) routeQuery['callerId'] = callerId;
-    if (callerName != null && callerName.isNotEmpty) routeQuery['callerName'] = callerName;
-    if (mediaType != null && mediaType.isNotEmpty) routeQuery['mediaType'] = mediaType;
-
-    if (routeQuery.isEmpty) {
-      return RoutePaths.trtcIncomingCall;
-    }
-    return Uri(
-      path: RoutePaths.trtcIncomingCall,
-      queryParameters: routeQuery,
-    ).toString();
   }
 }
 
@@ -1399,6 +1263,11 @@ class PushDebugSnapshot {
 Map<String, dynamic> _extractMergedPayload(Map<String, dynamic> event) {
   final merged = <String, dynamic>{};
 
+  // Start with top-level event fields (push ext top-level keys).
+  for (final entry in event.entries) {
+    merged[entry.key] = entry.value;
+  }
+
   void mergeMap(Object? value, {bool overwrite = true}) {
     final map = _asMap(value);
     if (map == null || map.isEmpty) {
@@ -1426,6 +1295,9 @@ Map<String, dynamic> _extractMergedPayload(Map<String, dynamic> event) {
       }
     } catch (_) {}
   }
+
+  // Tencent push templateParams carry eventId/page inside a nested map
+  mergeMap(event['templateParams'], overwrite: false);
 
   // Some call invites carry business fields in nested json strings
   // like userData/user_data instead of top-level ext keys.

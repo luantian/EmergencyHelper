@@ -8,6 +8,8 @@ import 'package:emergency_helper/src/core/errors/app_exception.dart';
 import 'package:emergency_helper/src/core/routing/route_paths.dart';
 import 'package:emergency_helper/src/core/theme/app_theme.dart';
 import 'package:emergency_helper/src/core/widgets/app_center_toast.dart';
+import 'package:emergency_helper/src/core/utils/file_logger.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:emergency_helper/src/features/event/data/event_center.dart';
 import 'package:emergency_helper/src/features/risk/data/risk_center.dart';
 import 'package:emergency_helper/src/features/trtc/data/tuicall_session_service.dart';
@@ -59,6 +61,23 @@ class _MineTabPageState extends State<MineTabPage> {
               onChangePassword: () => context.push(RoutePaths.changePassword),
               onPushDebug: () => context.push(RoutePaths.pushDebug),
               onBusinessDebug: () => context.push(RoutePaths.businessDebug),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: _exportLogFile,
+                icon: const Icon(Icons.description_outlined, size: 18),
+                label: const Text('导出运行日志', style: TextStyle(fontSize: 16)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.teal,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size.fromHeight(46),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
             ),
             const SizedBox(height: 16),
             SizedBox(
@@ -126,6 +145,38 @@ class _MineTabPageState extends State<MineTabPage> {
     }
   }
 
+  /// Share the current log file via system share sheet (WeChat, email, etc.).
+  Future<void> _exportLogFile() async {
+    final logPath = FileLogger.logPath;
+    if (logPath == null) {
+      if (mounted) {
+        AppCenterToast.show(context, '日志文件未初始化');
+      }
+      return;
+    }
+
+    final srcFile = File(logPath);
+    if (!srcFile.existsSync()) {
+      if (mounted) {
+        AppCenterToast.show(context, '日志文件不存在');
+      }
+      return;
+    }
+
+    try {
+      final result = await Share.shareXFiles(
+        [XFile(logPath)],
+        subject: '应急助手运行日志',
+      );
+      debugPrint('[MineTabPage] share log result: ${result.status}');
+    } catch (e) {
+      debugPrint('[MineTabPage] share log failed: $e');
+      if (mounted) {
+        AppCenterToast.show(context, '分享失败: $e');
+      }
+    }
+  }
+
   Future<void> _onLogout() async {
     if (_loggingOut) {
       return;
@@ -134,10 +185,10 @@ class _MineTabPageState extends State<MineTabPage> {
       _loggingOut = true;
     });
 
-    // Show full-screen loading dialog that covers bottom tab bar too.
-    _showLogoutDialog();
-
     try {
+      // Show full-screen loading dialog that covers bottom tab bar too.
+      _showLogoutDialog();
+
       final dependencies = context.read<AppDependencies>();
       final shouldNotifyServer = !_isFlutterTestEnv();
       final tokenSnapshot = shouldNotifyServer

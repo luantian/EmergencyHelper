@@ -650,11 +650,22 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
           inviteeIds: targetIds,
         );
 
+        // Send offline call push immediately so offline users can be woken up
+        // while the SDK ringing window is still active.
+        // sendOfflineCallPushNotification resolves callId from CallSessionManager
+        // (populated by onCallReceived) or falls back to UUID.
+        debugPrint('[TRTC-DEBUG][Page] step6: sending offline call push to callees');
+        unawaited(_sessionService.sendOfflineCallPushNotification(
+          calleeUserIds: targetIds,
+          callerId: selfUserId,
+          callerName: callerName,
+          mediaType: mediaTypeValue,
+        ));
+
         // Manually populate CallStore state for the caller side.
         // The SDK observer only fires onCallBegin for the callee,
         // so the caller's selfInfo and activeCall remain empty
         // unless we populate them here.
-        final callerName = (sessionReady.nickname ?? '').trim();
         debugPrint('[TRTC-DEBUG][Page] step6: populating CallStore caller state for selfUserId=$selfUserId');
         CallStore.shared.populateCallerState(selfUserId, callerName, targetIds, mediaType);
 

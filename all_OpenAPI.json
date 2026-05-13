@@ -6789,6 +6789,103 @@
         }
       }
     },
+    "/admin-api/api/trtc/sendToUserNotify": {
+      "post": {
+        "tags": [
+          "TRTC 视频通话"
+        ],
+        "summary": "推送消息",
+        "description": "推送消息",
+        "operationId": "Trtc_sendToUserNotify",
+        "parameters": [
+          {
+            "name": "userIdList",
+            "in": "query",
+            "description": "用户编号(多个逗号分隔)",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "用户编号(多个逗号分隔)",
+              "example": "1,2,3"
+            },
+            "example": "1,2,3"
+          },
+          {
+            "name": "content",
+            "in": "query",
+            "description": "推送内容",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "推送内容"
+            }
+          },
+          {
+            "name": "title",
+            "in": "query",
+            "description": "推送标题",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "推送标题"
+            }
+          },
+          {
+            "name": "ext",
+            "in": "query",
+            "description": "附加信息(json字符串)",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "附加信息(json字符串)",
+              "example": "1,2,3"
+            },
+            "example": "1,2,3"
+          },
+          {
+            "name": "androidInfo",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "tenant-id",
+            "in": "header",
+            "description": "租户编号",
+            "schema": {
+              "type": "integer",
+              "description": "租户编号",
+              "format": "int32",
+              "default": 1
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "description": "认证 Token",
+            "schema": {
+              "type": "string",
+              "description": "认证 Token",
+              "default": "Bearer test1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "*/*": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommonResult"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin-api/api/trtc/callback": {
       "post": {
         "tags": [
@@ -11421,6 +11518,16 @@
             "schema": {
               "type": "string",
               "description": "创建时间"
+            }
+          },
+          {
+            "name": "templateCode",
+            "in": "query",
+            "description": "模板编码",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "模板编码"
             }
           },
           {
@@ -32078,6 +32185,21 @@
           }
         },
         "description": "TRTC 签名验证结果"
+      },
+      "CommonResult": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "msg": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object"
+          }
+        }
       },
       "TrtcCallbackRequest": {
         "required": [

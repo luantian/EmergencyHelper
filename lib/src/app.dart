@@ -1,17 +1,21 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:emergency_helper/src/core/constants/app_constants.dart';
 import 'package:emergency_helper/src/core/di/app_dependencies.dart';
 import 'package:emergency_helper/src/core/network/api_client.dart';
+import 'package:go_router/go_router.dart';
 import 'package:emergency_helper/src/core/routing/app_router.dart';
+import 'package:emergency_helper/src/core/routing/pending_push_route_store.dart';
 import 'package:emergency_helper/src/core/routing/route_paths.dart';
 import 'package:emergency_helper/src/core/theme/app_theme.dart';
 import 'package:emergency_helper/src/core/widgets/app_center_toast.dart';
 import 'package:emergency_helper/src/features/event/data/event_center.dart';
 import 'package:emergency_helper/src/features/push/data/push_service.dart';
 import 'package:emergency_helper/src/features/risk/data/risk_center.dart';
+import 'package:emergency_helper/src/features/trtc/data/call_phase.dart';
+import 'package:emergency_helper/src/features/trtc/data/custom_call_navigator.dart';
 import 'package:emergency_helper/src/features/trtc/data/tuicall_session_service.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -22,6 +26,10 @@ class EmergencyHelperApp extends StatefulWidget {
   const EmergencyHelperApp({super.key, required this.dependencies});
 
   final AppDependencies dependencies;
+
+  /// Static accessor for SplashPage to await full app initialization
+  /// (push init + pending push handling). Set in initState.
+  static Future<void> Function()? appReady;
 
   @override
   State<EmergencyHelperApp> createState() => _EmergencyHelperAppState();
@@ -36,10 +44,19 @@ class _EmergencyHelperAppState extends State<EmergencyHelperApp> {
   Timer? _pushBannerTimer;
   _InAppPushBannerData? _pushBannerData;
   bool _isHandlingAuthExpired = false;
+  bool _isNavigatingFromPush = false;
+  final Completer<void> _initCompleter = Completer<void>();
+
+  // Dedup key for push open events — prevents duplicate navigation when both
+  // the Flutter plugin callback and the native retry loop fire for the same tap.
+  String? _lastHandledPushKey;
+  DateTime? _lastHandledPushTime;
+  Timer? _navigatingFromPushResetTimer;
 
   @override
   void initState() {
     super.initState();
+    EmergencyHelperApp.appReady = () => _initCompleter.future;
     _authExpiredSubscription = widget.dependencies.apiClient.authExpiredStream
         .listen((event) {
           unawaited(_handleAuthExpired(event));
@@ -70,6 +87,7 @@ class _EmergencyHelperAppState extends State<EmergencyHelperApp> {
     _pushOpenSubscription.cancel();
     _pushIncomingSubscription.cancel();
     _pushBannerTimer?.cancel();
+    _navigatingFromPushResetTimer?.cancel();
     widget.dependencies.dispose();
     super.dispose();
   }
@@ -115,20 +133,122 @@ class _EmergencyHelperAppState extends State<EmergencyHelperApp> {
   }
 
   Future<void> _handlePushOpen(PushOpenPayload payload) async {
+    debugPrint('[App] _handlePushOpen: START routePath=${payload.routePath}');
     _dismissTopPushBanner();
-    await _navigateByRoutePath(payload.routePath);
+
+    // Dedup: same call notification within 3s → skip duplicate event.
+    // Uses callId if available, otherwise composite key (callerId+page+mediaType).
+    final rawCallId = (payload.raw['callId'] as String?) ?? '';
+    final dedupKey = rawCallId.isNotEmpty
+        ? 'call:$rawCallId'
+        : 'caller:${payload.raw['callerId'] ?? ''}'
+            '|page:${payload.raw['page'] ?? ''}'
+            '|media:${payload.raw['mediaType'] ?? ''}';
+    final now = DateTime.now();
+    debugPrint('[App] _handlePushOpen: dedupKey=$dedupKey lastKey=$_lastHandledPushKey');
+    if (dedupKey.isNotEmpty &&
+        dedupKey == _lastHandledPushKey &&
+        _lastHandledPushTime != null &&
+        now.difference(_lastHandledPushTime!) < const Duration(seconds: 3)) {
+      debugPrint('[App] _handlePushOpen: duplicate push skipped, key=$dedupKey');
+      return;
+    }
+    _lastHandledPushKey = dedupKey;
+    _lastHandledPushTime = now;
+
+    if (_isNavigatingFromPush) {
+      debugPrint('[App] _handlePushOpen: already navigating from push, skipping');
+      return;
+    }
+    debugPrint('[App] _handlePushOpen: calling _navigateByRoutePath');
+    await _navigateByRoutePath(payload.routePath, payload);
   }
 
-  Future<void> _navigateByRoutePath(String routePath) async {
+  Future<void> _navigateByRoutePath(String routePath, [PushOpenPayload? payload]) async {
+    debugPrint('[App] _navigateByRoutePath called: routePath=$routePath');
+    if (_isNavigatingFromPush) {
+      debugPrint('[App] _navigateByRoutePath: already navigating from push, skipping');
+      return;
+    }
+    _isNavigatingFromPush = true;
+    final normalizedPath = routePath.trim().toLowerCase();
+
+    // Call-invite routes (/trtc-call-new, /trtc-call) should never be
+    // navigated to directly 鈥?they use join() which bypasses the SDK call
+    // state machine. Let the SDK observer re-deliver onCallReceived instead,
+    // which triggers IncomingCallPage 鈫?accept() path.
+    if (normalizedPath.startsWith('/trtc-call')) {
+      _isNavigatingFromPush = false;
+      debugPrint('[App] skipping navigation to call route $routePath; SDK will handle onCallReceived');
+      return;
+    }
+
+    // When the resolved target is /home from an incoming call push notification,
+    // we need to restore the incoming call UI ourselves — the push was sent by
+    // our backend API (not the TRTC SDK), so the SDK observer will NOT re-fire
+    // onCallReceived when the app cold-starts from this notification.
+    if (normalizedPath == RoutePaths.home) {
+      debugPrint('[App] target is /home, going directly via go(home)');
+      _router.go(RoutePaths.home);
+
+      // Do NOT open IncomingCallPage here from push payload. The push only
+      // wakes the app — TRTC warmup (IM login + TUICallEngine init + observer
+      // registration) must complete first. The SDK will fire onCallReceived
+      // when the call is still active, which triggers navigateToIncomingCall.
+      // If the call has ended, onCallNotConnected fires and we stay on Home.
+
+      // Delay guard reset with a timer so a near-duplicate event (e.g. native
+      // retry loop firing ~200ms later) hits the guard while still true.
+      _navigatingFromPushResetTimer?.cancel();
+      _navigatingFromPushResetTimer = Timer(
+        const Duration(milliseconds: 500),
+        () => _isNavigatingFromPush = false,
+      );
+      return;
+    }
+
+    // Store the push target route. SplashPage._bootstrapSession will
+    // consume() it and navigate after auth is validated, ensuring a single
+    // go(Home) 鈫?push(target) path instead of competing with this handler.
+    PendingPushRouteStore.instance.set(routePath);
+    debugPrint('[App] PendingPushRouteStore set to $routePath');
+
     final token = await widget.dependencies.authLocalStore.getAccessToken();
     if (!mounted) {
+      _isNavigatingFromPush = false;
+      debugPrint('[App] _navigateByRoutePath: not mounted after token check');
       return;
     }
     if (token == null || token.trim().isEmpty) {
+      _isNavigatingFromPush = false;
+      debugPrint('[App] _navigateByRoutePath: no token, going to login');
       _router.go(RoutePaths.login);
       return;
     }
-    _router.go(routePath);
+
+    // Warm-start: user is already on a page (e.g. Home). Navigate via
+    // go(home) 鈫?push(target) so back returns to home.
+    // Cold-start: SplashPage._bootstrapSession will detect the pending
+    // route and skip navigation 鈥?let this handler do the work.
+    debugPrint('[App] _navigateByRoutePath: going to home, will push target=$routePath');
+    _router.go(RoutePaths.home);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      debugPrint('[App] _navigateByRoutePath: postFrameCallback firing, pushing $routePath');
+      _isNavigatingFromPush = false;
+      if (!mounted) {
+        debugPrint('[App] _navigateByRoutePath: not mounted in postFrameCallback');
+        return;
+      }
+      // Use the root navigator context, not this widget's context. The
+      // widget tree may have changed (e.g., splash 鈫?home transition)
+      // since go(home) was called, and a stale context causes push to fail.
+      final rootContext = AppRouter.navigatorKey.currentContext;
+      if (rootContext == null) {
+        debugPrint('[App] _navigateByRoutePath: root navigator context not available');
+        return;
+      }
+      rootContext.push(routePath);
+    });
   }
 
   Future<void> _handleAuthExpired(ApiAuthExpiredEvent event) async {
@@ -441,12 +561,80 @@ class _EmergencyHelperAppState extends State<EmergencyHelperApp> {
   }
 
   Future<void> _initializeDependencies() async {
-    await _ensureNotificationPermission();
-    await widget.dependencies.initialize();
-    final pendingPayload = widget.dependencies.pushService
-        .consumePendingOpenPayload();
-    if (pendingPayload != null) {
-      await _handlePushOpen(pendingPayload);
+    try {
+      await _ensureNotificationPermission();
+      await widget.dependencies.initialize();
+      final pendingPayload = widget.dependencies.pushService
+          .consumePendingOpenPayload();
+      if (pendingPayload != null) {
+        await _handlePushOpen(pendingPayload);
+      }
+    } finally {
+      if (!_initCompleter.isCompleted) {
+        _initCompleter.complete();
+      }
+    }
+
+    // Start TRTC warmup (IM login + TUICallEngine init + observer registration)
+    // at App level so it runs regardless of SplashPage lifecycle. This ensures
+    // incoming call observer is registered even during cold-start from push.
+    unawaited(_warmupTrtcInBackground());
+    unawaited(_bindPushAliasInBackground());
+  }
+
+  Future<void> _warmupTrtcInBackground() async {
+    try {
+      final wasFromCallPush = _isFromCallPushColdStart();
+      await TUICallSessionService.instance
+          .warmupSessionAndPushInBackground(
+            dependencies: widget.dependencies,
+          )
+          .timeout(const Duration(seconds: 30), onTimeout: () {});
+
+      // If cold-started from a call push and no incoming call was received
+      // after warmup completed, the call has already ended — show toast.
+      if (wasFromCallPush && mounted) {
+        final hasActiveCall =
+            CallSessionManager.instance.current.phase == CallPhase.incomingRinging;
+        if (!hasActiveCall) {
+          debugPrint('[App] warmup done, no pending call → call expired');
+          CustomCallNavigator.instance.showToast('通话已结束');
+        }
+      }
+    } catch (_) {
+      // Non-critical; subsequent protected APIs will re-init if needed.
+    }
+  }
+
+  bool _isFromCallPushColdStart() {
+    final page = PendingPushRouteStore.instance.peek();
+    if (page == null) return false;
+    final normalized = page.trim().toLowerCase();
+    return normalized == RoutePaths.home ||
+        normalized.startsWith('/trtc-call') ||
+        normalized.contains('incoming_call');
+  }
+
+  Future<void> _bindPushAliasInBackground() async {
+    try {
+      Map<String, dynamic>? permissionInfo = await widget.dependencies.authService
+          .getCachedPermissionInfo();
+      permissionInfo ??= await widget.dependencies.authService
+          .fetchPermissionInfoAndCache();
+      await widget.dependencies.pushService.bindAliasFromPermissionInfo(
+        permissionInfo,
+      );
+    } catch (_) {
+      await Future<void>.delayed(const Duration(seconds: 2));
+      try {
+        Map<String, dynamic>? permissionInfo = await widget.dependencies.authService
+            .getCachedPermissionInfo();
+        permissionInfo ??= await widget.dependencies.authService
+            .fetchPermissionInfoAndCache();
+        await widget.dependencies.pushService.bindAliasFromPermissionInfo(
+          permissionInfo,
+        );
+      } catch (_) {}
     }
   }
 

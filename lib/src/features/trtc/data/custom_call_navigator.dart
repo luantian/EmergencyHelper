@@ -17,6 +17,9 @@ class CustomCallNavigator {
   /// Used during cold-start join to avoid duplicate IncomingCallPage.
   bool suppressIncomingPush = false;
 
+  /// Dedup: last callId we navigated to incoming call for.
+  String? _lastIncomingCallId;
+
   /// When true, shows "通话已结束" toast after dismissAllCallScreens().
   /// Set by IncomingCallPage cold-start join failure catch block.
   static bool showCallEndedToast = false;
@@ -31,10 +34,20 @@ class CustomCallNavigator {
       debugPrint('[TRTC-DEBUG][Navigator] navigateToIncomingCall suppressed (cold-start in progress)');
       return;
     }
-    _callPagesPushed++;
+    // Dedup: same callId already navigated to → skip.
+    // Must check BEFORE updating _lastIncomingCallId, since
+    // onCallReceived calls markIncomingCall before this method.
+    if (callId.isNotEmpty && callId == _lastIncomingCallId) {
+      debugPrint('[TRTC-DEBUG][Navigator] navigateToIncomingCall dedup skipped, callId=$callId');
+      return;
+    }
+    if (callId.isNotEmpty) {
+      _lastIncomingCallId = callId;
+    }
     final context = AppRouter.navigatorKey.currentContext;
     debugPrint('[TRTC-DEBUG][Navigator] navigateToIncomingCall callId=$callId caller=$callerName mediaType=$mediaType context=${context != null ? "OK" : "NULL"}');
     if (context == null) return;
+    _callPagesPushed++;
     final path = '${RoutePaths.trtcIncomingCall}'
         '?callId=${Uri.encodeComponent(callId)}'
         '&callerId=${Uri.encodeComponent(callerId)}'
@@ -88,6 +101,7 @@ class CustomCallNavigator {
     debugPrint('[TRTC-DEBUG][Navigator] calling _safePopCallPages from dismissAllCallScreens');
     _safePopCallPages(navigator, _callPagesPushed);
     _callPagesPushed = 0;
+    _lastIncomingCallId = null;
 
     // Show call-ended toast after pages are popped (avoids conflict with pop).
     if (showCallEndedToast) {

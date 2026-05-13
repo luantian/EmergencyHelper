@@ -17,6 +17,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
 import 'package:rtc_room_engine/rtc_room_engine.dart' as rtc;
+import 'package:vibration/vibration.dart';
 
 /// In-call screen with video/audio display and controls.
 class InCallPage extends StatefulWidget {
@@ -51,6 +52,7 @@ class _InCallPageState extends State<InCallPage> {
   bool _isSpeakerOn = true;
   bool _isInviting = false;
   bool _isRinging = false;
+  Timer? _vibrationTimer;
   // Which participant's video is in the PiP small window.
   // true = self, false = remote (first remote participant).
   bool _isSelfInPip = true;
@@ -139,6 +141,7 @@ class _InCallPageState extends State<InCallPage> {
   }
 
   void _onCallNotification(String message) {
+    if (!mounted) return;
     if (message.contains('其他设备接听') || message.contains('其他设备拒绝') || message.contains('对方已挂断')) {
       _stopRinging();
       AppCenterToast.show(context, message);
@@ -166,6 +169,7 @@ class _InCallPageState extends State<InCallPage> {
         toastMsg = '对方已挂断通话';
       }
       if (toastMsg != null) {
+        if (!mounted) return;
         _stopRinging();
         AppCenterToast.show(context, toastMsg);
         _handleHangup();
@@ -285,13 +289,31 @@ class _InCallPageState extends State<InCallPage> {
     } catch (e) {
       debugPrint('[TRTC-DEBUG][InCall] ringtone failed: $e');
     }
+
+    // Vibrate while waiting for callee to answer (caller side only).
+    try {
+      final hasVibrator = await Vibration.hasVibrator() ?? false;
+      if (hasVibrator) {
+        _vibrationTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+          if (!_isRinging) return;
+          Vibration.vibrate(duration: 1000);
+        });
+        Vibration.vibrate(duration: 1000);
+        debugPrint('[TRTC-DEBUG][InCall] vibration started');
+      }
+    } catch (e) {
+      debugPrint('[TRTC-DEBUG][InCall] vibration failed: $e');
+    }
   }
 
   void _stopRinging() {
     if (!_isRinging) return;
     _isRinging = false;
+    _vibrationTimer?.cancel();
+    _vibrationTimer = null;
     try {
       FlutterRingtonePlayer().stop();
+      Vibration.cancel();
       debugPrint('[TRTC-DEBUG][InCall] ringing stopped');
     } catch (e) {
       debugPrint('[TRTC-DEBUG][InCall] stop ringing failed: $e');
@@ -299,18 +321,18 @@ class _InCallPageState extends State<InCallPage> {
   }
 
   Future<void> _handleHangup() async {
+    debugPrint('[TRTC-DEBUG][InCall] >>> _handleHangup tapped');
     try {
-      await CallStore.shared.hangup();
+      await CallStore.shared.hangup().timeout(
+        const Duration(seconds: 5),
+        onTimeout: () => throw TimeoutException('hangup() timed out'),
+      );
     } catch (e) {
       debugPrint('[InCall] hangup failed: $e');
-      // Even if hangup fails, dismiss the UI.
-      if (mounted) {
-        Navigator.of(context).pop();
-      }
     }
-    // Do NOT pop here. The SDK fires onCallEnd which calls
-    // dismissAllCallScreens() to handle navigation.
-    // Popping here + observer dismissal causes race condition.
+    if (mounted) {
+      CustomCallNavigator.instance.dismissAllCallScreens();
+    }
   }
 
   Future<void> _handleInvite() async {
@@ -377,6 +399,12 @@ class _InCallPageState extends State<InCallPage> {
       final result = await rtc.TUICallEngine.instance.inviteUser(
         targetIds,
         rtcCallParams,
+      ).timeout(
+        const Duration(seconds: 60),
+        onTimeout: () {
+          debugPrint('[TRTC-DEBUG][InCall] inviteUser timed out');
+          throw TimeoutException('inviteUser timed out');
+        },
       );
 
       if (!mounted) return;
