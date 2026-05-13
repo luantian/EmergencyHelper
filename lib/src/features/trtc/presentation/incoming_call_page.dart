@@ -56,6 +56,7 @@ class _IncomingCallPageState extends State<IncomingCallPage>
   void initState() {
     super.initState();
     debugPrint('[TRTC-DEBUG][IncomingCall] initState: caller=${widget.callerName}(${widget.callerId}) mediaType=${widget.mediaType} callId=${widget.callId}');
+    CustomCallNavigator.instance.setCallPageVisible(true);
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1200),
@@ -214,6 +215,7 @@ class _IncomingCallPageState extends State<IncomingCallPage>
   @override
   void dispose() {
     debugPrint('[TRTC-DEBUG][IncomingCall] dispose');
+    CustomCallNavigator.instance.setCallPageVisible(false);
     _stopRinging();
     _incomingCallTimeoutTimer?.cancel();
     _callStatePollTimer?.cancel();

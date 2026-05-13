@@ -26,6 +26,8 @@ class CallSession {
     this.remoteUserId = '',
     this.inviterId = '',
     this.inviteeIds = const <String>[],
+    this.callerName = '',
+    this.calleeNames = const <String>[],
   });
 
   final CallPhase phase;
@@ -34,6 +36,8 @@ class CallSession {
   final String remoteUserId;
   final String inviterId;
   final List<String> inviteeIds;
+  final String callerName;
+  final List<String> calleeNames;
 
   bool get isIdle => phase == CallPhase.idle;
   bool get isRinging =>
@@ -48,6 +52,8 @@ class CallSession {
     String? remoteUserId,
     String? inviterId,
     List<String>? inviteeIds,
+    String? callerName,
+    List<String>? calleeNames,
   }) {
     return CallSession(
       phase: phase ?? this.phase,
@@ -56,13 +62,15 @@ class CallSession {
       remoteUserId: remoteUserId ?? this.remoteUserId,
       inviterId: inviterId ?? this.inviterId,
       inviteeIds: inviteeIds ?? this.inviteeIds,
+      callerName: callerName ?? this.callerName,
+      calleeNames: calleeNames ?? this.calleeNames,
     );
   }
 
   @override
   String toString() {
     return 'CallSession(phase=$phase, callId=$callId, mediaType=$mediaType, '
-        'remoteUserId=$remoteUserId, inviterId=$inviterId)';
+        'remoteUserId=$remoteUserId, inviterId=$inviterId, callerName=$callerName)';
   }
 }
 
@@ -76,10 +84,19 @@ class CallSessionManager {
 
   CallSession get current => _current;
 
+  /// Reactive notifier for the current call phase.
+  final ValueNotifier<CallPhase> phaseNotifier =
+      ValueNotifier<CallPhase>(CallPhase.idle);
+
+  void _notifyPhaseChanged() {
+    phaseNotifier.value = _current.phase;
+  }
+
   /// Transition to idle (end any active call).
   void resetToIdle() {
     debugPrint('[CallSessionManager] resetToIdle from ${_current.phase}');
     _current = const CallSession(phase: CallPhase.idle);
+    _notifyPhaseChanged();
   }
 
   /// Transition: idle → incomingRinging
@@ -87,10 +104,11 @@ class CallSessionManager {
     required String callId,
     required String callerId,
     required String mediaType,
+    String callerName = '',
   }) {
     debugPrint(
       '[CallSessionManager] idle → incomingRinging '
-      'callId=$callId caller=$callerId media=$mediaType',
+      'callId=$callId caller=$callerId media=$mediaType name=$callerName',
     );
     _current = CallSession(
       phase: CallPhase.incomingRinging,
@@ -98,7 +116,9 @@ class CallSessionManager {
       mediaType: mediaType,
       remoteUserId: callerId,
       inviterId: callerId,
+      callerName: callerName,
     );
+    _notifyPhaseChanged();
   }
 
   /// Transition: idle → outgoingRinging
@@ -107,6 +127,7 @@ class CallSessionManager {
     required String mediaType,
     required String inviterId,
     required List<String> inviteeIds,
+    List<String> calleeNames = const <String>[],
   }) {
     debugPrint(
       '[CallSessionManager] idle → outgoingRinging '
@@ -119,7 +140,9 @@ class CallSessionManager {
       inviterId: inviterId,
       inviteeIds: inviteeIds,
       remoteUserId: inviteeIds.isNotEmpty ? inviteeIds.first : '',
+      calleeNames: calleeNames,
     );
+    _notifyPhaseChanged();
   }
 
   /// Transition: ringing → connecting (local or remote accepted)
@@ -131,6 +154,7 @@ class CallSessionManager {
       phase: CallPhase.connecting,
       callId: callId ?? _current.callId,
     );
+    _notifyPhaseChanged();
   }
 
   /// Transition: connecting → inCall
@@ -142,6 +166,7 @@ class CallSessionManager {
       phase: CallPhase.inCall,
       callId: callId ?? _current.callId,
     );
+    _notifyPhaseChanged();
   }
 
   /// Update callId in current session (e.g., after onCallReceived provides the real ID).

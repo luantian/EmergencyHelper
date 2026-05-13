@@ -10,6 +10,15 @@ class CustomCallNavigator {
   CustomCallNavigator._();
   static final CustomCallNavigator instance = CustomCallNavigator._();
 
+  /// Reactive flag: true when a call page (incoming, in-call, outgoing) is
+  /// the topmost visible page on the navigation stack.
+  final ValueNotifier<bool> isCallPageVisibleNotifier =
+      ValueNotifier<bool>(false);
+
+  void setCallPageVisible(bool visible) {
+    isCallPageVisibleNotifier.value = visible;
+  }
+
   /// Number of call pages pushed (IncomingCall + InCall).
   int _callPagesPushed = 0;
 

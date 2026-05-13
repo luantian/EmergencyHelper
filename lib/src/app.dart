@@ -14,8 +14,6 @@ import 'package:emergency_helper/src/core/widgets/app_center_toast.dart';
 import 'package:emergency_helper/src/features/event/data/event_center.dart';
 import 'package:emergency_helper/src/features/push/data/push_service.dart';
 import 'package:emergency_helper/src/features/risk/data/risk_center.dart';
-import 'package:emergency_helper/src/features/trtc/data/call_phase.dart';
-import 'package:emergency_helper/src/features/trtc/data/custom_call_navigator.dart';
 import 'package:emergency_helper/src/features/trtc/data/tuicall_session_service.dart';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -40,7 +38,6 @@ class _EmergencyHelperAppState extends State<EmergencyHelperApp> {
   late final StreamSubscription<ApiAuthExpiredEvent> _authExpiredSubscription;
   late final StreamSubscription<PushOpenPayload> _pushOpenSubscription;
   late final StreamSubscription<PushIncomingEvent> _pushIncomingSubscription;
-
   Timer? _pushBannerTimer;
   _InAppPushBannerData? _pushBannerData;
   bool _isHandlingAuthExpired = false;
@@ -594,11 +591,10 @@ class _EmergencyHelperAppState extends State<EmergencyHelperApp> {
       // If cold-started from a call push and no incoming call was received
       // after warmup completed, the call has already ended — show toast.
       if (wasFromCallPush && mounted) {
-        final hasActiveCall =
-            CallSessionManager.instance.current.phase == CallPhase.incomingRinging;
+        final hasActiveCall = TUICallSessionService.instance.isSessionWarm;
         if (!hasActiveCall) {
           debugPrint('[App] warmup done, no pending call → call expired');
-          CustomCallNavigator.instance.showToast('通话已结束');
+          AppCenterToast.show(context, '通话已结束');
         }
       }
     } catch (_) {

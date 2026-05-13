@@ -72,6 +72,7 @@ class _InCallPageState extends State<InCallPage> {
   void initState() {
     super.initState();
     debugPrint('[TRTC-DEBUG][InCall] initState: callId=${widget.callId} mediaType=${widget.mediaType} isCallerSide=${widget.isCallerSide}');
+    CustomCallNavigator.instance.setCallPageVisible(true);
 
     // Safety net: if CallStore state wasn't populated by the caller
     // (e.g., navigated directly via URL), populate it from widget.selfUserId.
@@ -124,6 +125,7 @@ class _InCallPageState extends State<InCallPage> {
   @override
   void dispose() {
     debugPrint('[TRTC-DEBUG][InCall] dispose: resetting DeviceStore focus');
+    CustomCallNavigator.instance.setCallPageVisible(false);
     _nativeCallEventSub?.cancel();
     DeviceStore.shared.reset();
     DeviceStore.shared.setFocus(DeviceFocusOwner.none);
@@ -385,6 +387,19 @@ class _InCallPageState extends State<InCallPage> {
     }
 
     try {
+      final selfInfo = CallStore.shared.state.selfInfo.value;
+      final selfName = selfInfo.name.isNotEmpty ? selfInfo.name : selfId;
+      final mediaLabel = widget.mediaType == CallMediaType.video ? '视频' : '语音';
+      final pushInfo = rtc.TUIOfflinePushInfo()
+        ..title = '${mediaLabel}邀请'
+        ..desc = '$selfName发来${mediaLabel}通话请求，请查看'
+        ..androidSound = 'phone_ringing'
+        ..androidOPPOChannelID = ''
+        ..androidVIVOClassification = 1
+        ..androidXiaoMiChannelID = ''
+        ..androidFCMChannelID = ''
+        ..androidHuaWeiCategory = 'VOIP'
+        ..iOSPushType = rtc.TUICallIOSOfflinePushType.VoIP;
       final callUserData = <String, dynamic>{
         'source': 'emergency_helper',
         'page': 'trtc_call',
@@ -393,7 +408,8 @@ class _InCallPageState extends State<InCallPage> {
         'sentAt': DateTime.now().toIso8601String(),
       };
       final rtcCallParams = rtc.TUICallParams()
-        ..userData = jsonEncode(callUserData);
+        ..userData = jsonEncode(callUserData)
+        ..offlinePushInfo = pushInfo;
 
       debugPrint('[InCall] inviting users: $targetIds');
       final result = await rtc.TUICallEngine.instance.inviteUser(

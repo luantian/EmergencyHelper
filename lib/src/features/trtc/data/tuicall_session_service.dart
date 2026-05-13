@@ -156,16 +156,18 @@ class TUICallSessionService {
           CustomCallNavigator.instance.dismissAllCallScreens();
         }
 
-        CallSessionManager.instance.markIncomingCall(
-          callId: callId,
-          callerId: callerId,
-          mediaType: mediaStr,
-        );
-        // Navigate to custom incoming call UI.
+        // Resolve caller name before creating the session so it's stored.
         // Priority: info.userData (from TUICallParams) > ParticipantNameRegistry > CallStore > callerId
         final callerName = _resolveCallerName(callerId, info);
         // Register caller name for display in call UI
         ParticipantNameRegistry.register(callerId, callerName);
+
+        CallSessionManager.instance.markIncomingCall(
+          callId: callId,
+          callerId: callerId,
+          mediaType: mediaStr,
+          callerName: callerName,
+        );
         debugPrint('[TRTC-DEBUG][Observer] navigating to trtcIncomingCall for callId=$callId, callerName=$callerName');
         CustomCallNavigator.instance.navigateToIncomingCall(
           callId: callId,

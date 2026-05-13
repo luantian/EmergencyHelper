@@ -43,6 +43,7 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
   @override
   void initState() {
     super.initState();
+    CustomCallNavigator.instance.setCallPageVisible(true);
     _invitees = _buildInviteesFromRoute(widget.routeExtra);
     _registerNameFromInvitees();
     _registerNamesFromRouteExtra();
@@ -53,6 +54,7 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
 
   @override
   void dispose() {
+    CustomCallNavigator.instance.setCallPageVisible(false);
     _sessionService.removeCallNotificationListener(_onCallNotification);
     super.dispose();
   }
@@ -600,7 +602,20 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
       if (targetNames.isNotEmpty) {
         callUserData['calleeNames'] = targetNames.join(',');
       }
-      final rtcCallParams = rtc.TUICallParams()..userData = jsonEncode(callUserData);
+      final mediaLabel = _mediaTypeLabel(mediaType);
+      final pushInfo = rtc.TUIOfflinePushInfo()
+        ..title = '${mediaLabel}邀请'
+        ..desc = '$callerName发来${mediaLabel}通话请求，请查看'
+        ..androidSound = 'phone_ringing'
+        ..androidOPPOChannelID = ''
+        ..androidVIVOClassification = 1
+        ..androidXiaoMiChannelID = ''
+        ..androidFCMChannelID = ''
+        ..androidHuaWeiCategory = 'VOIP'
+        ..iOSPushType = rtc.TUICallIOSOfflinePushType.VoIP;
+      final rtcCallParams = rtc.TUICallParams()
+        ..userData = jsonEncode(callUserData)
+        ..offlinePushInfo = pushInfo;
       debugPrint('[TRTC-DEBUG][Page] step4: callParams.userData=${rtcCallParams.userData}');
 
       debugPrint('[TRTC-DEBUG][Page] step5: calling TUICallEngine.calls(targets=${targetIds.join(",")}, mediaType=$mediaTypeText)');
@@ -643,24 +658,18 @@ class _TrtcCallNewPageState extends State<TrtcCallNewPage> {
 
         // Track outgoing call phase for multi-device sync.
         final mediaTypeValue = mediaType == CallMediaType.video ? 'video' : 'audio';
+        final calleeNameList = _invitees
+            .where((e) => targetIds.contains(e.userId.trim()))
+            .map((e) => e.name.trim())
+            .where((n) => n.isNotEmpty)
+            .toList(growable: false);
         CallSessionManager.instance.markOutgoingCall(
           callId: '',
           mediaType: mediaTypeValue,
           inviterId: selfUserId,
           inviteeIds: targetIds,
+          calleeNames: calleeNameList,
         );
-
-        // Send offline call push immediately so offline users can be woken up
-        // while the SDK ringing window is still active.
-        // sendOfflineCallPushNotification resolves callId from CallSessionManager
-        // (populated by onCallReceived) or falls back to UUID.
-        debugPrint('[TRTC-DEBUG][Page] step6: sending offline call push to callees');
-        unawaited(_sessionService.sendOfflineCallPushNotification(
-          calleeUserIds: targetIds,
-          callerId: selfUserId,
-          callerName: callerName,
-          mediaType: mediaTypeValue,
-        ));
 
         // Manually populate CallStore state for the caller side.
         // The SDK observer only fires onCallBegin for the callee,

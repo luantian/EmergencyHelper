@@ -18,6 +18,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import 'package:rtc_room_engine/rtc_room_engine.dart' as rtc;
+import 'package:tencent_cloud_chat_sdk/tencent_im_sdk_plugin.dart';
 
 class MineTabPage extends StatefulWidget {
   const MineTabPage({super.key});
@@ -218,6 +219,19 @@ class _MineTabPageState extends State<MineTabPage> {
         dependencies.pushService.unregisterPush(),
         timeout: const Duration(seconds: 3),
       );
+
+      // Logout from Tencent IM SDK to disconnect the long-poll session.
+      // Without this, TIMPush may continue receiving pushes because the IM
+      // SDK session stays active even after unregisterPush.
+      try {
+        await TencentImSDKPlugin.v2TIMManager
+            .logout()
+            .timeout(const Duration(seconds: 3));
+        debugPrint('[MineTabPage] IM SDK logout success');
+      } catch (e) {
+        debugPrint('[MineTabPage] IM SDK logout failed: $e');
+      }
+
       await dependencies.authLocalStore.clear();
       EventCenter.instance.resetSessionCache(notify: false);
       RiskCenter.instance.resetSessionData(notify: false);
