@@ -151,6 +151,14 @@ class MainApplication : BmfMapApplication() {
     private var activityReferences = 0
     private var isActivityChangingConfigurations = false
 
+    /// Cold-start push ext data extracted from Intent extras
+    @Volatile var coldStartPushExt: String? = null
+
+    fun storeColdStartPushExt(ext: String) {
+        coldStartPushExt = ext
+        Log.d(TAG, "storeColdStartPushExt: stored ext=$ext")
+    }
+
     private val timPushListener = object : TIMPushListener() {
         override fun onRecvPushMessage(msg: TIMPushMessage) {
             Log.d(TAG, "onRecvPushMessage: ${msg.toString()}")

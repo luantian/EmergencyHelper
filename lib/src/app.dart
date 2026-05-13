@@ -204,9 +204,8 @@ class _EmergencyHelperAppState extends State<EmergencyHelperApp> {
       return;
     }
 
-    // Store the push target route. SplashPage._bootstrapSession will
-    // consume() it and navigate after auth is validated, ensuring a single
-    // go(Home) 鈫?push(target) path instead of competing with this handler.
+    // Store the push target route so HomePage._dispatchPendingPushRoute
+    // can pick it up after the home page is built.
     PendingPushRouteStore.instance.set(routePath);
     debugPrint('[App] PendingPushRouteStore set to $routePath');
 
@@ -223,11 +222,17 @@ class _EmergencyHelperAppState extends State<EmergencyHelperApp> {
       return;
     }
 
-    // Warm-start: user is already on a page (e.g. Home). Navigate via
-    // go(home) 鈫?push(target) so back returns to home.
-    // Cold-start: SplashPage._bootstrapSession will detect the pending
-    // route and skip navigation 鈥?let this handler do the work.
-    debugPrint('[App] _navigateByRoutePath: going to home, will push target=$routePath');
+    // Cold-start: only store the route and let HomePage handle the dispatch.
+    // HomePage is being built by go('/home'), so it can push the target
+    // from its own context once ready.
+    if (!widget.dependencies.pushService.isInitialized) {
+      debugPrint('[App] _navigateByRoutePath: cold-start, route stored for HomePage to dispatch');
+      _isNavigatingFromPush = false;
+      return;
+    }
+
+    // Warm-start: user is already on Home. Navigate via go(home) → push(target).
+    debugPrint('[App] _navigateByRoutePath: warm-start, going to home then pushing $routePath');
     _router.go(RoutePaths.home);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       debugPrint('[App] _navigateByRoutePath: postFrameCallback firing, pushing $routePath');
@@ -236,9 +241,6 @@ class _EmergencyHelperAppState extends State<EmergencyHelperApp> {
         debugPrint('[App] _navigateByRoutePath: not mounted in postFrameCallback');
         return;
       }
-      // Use the root navigator context, not this widget's context. The
-      // widget tree may have changed (e.g., splash 鈫?home transition)
-      // since go(home) was called, and a stale context causes push to fail.
       final rootContext = AppRouter.navigatorKey.currentContext;
       if (rootContext == null) {
         debugPrint('[App] _navigateByRoutePath: root navigator context not available');

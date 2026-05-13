@@ -23,6 +23,47 @@ class MainActivity : FlutterActivity() {
         Log.d(TAG, "onCreate start")
         super.onCreate(savedInstanceState)
         Log.d(TAG, "onCreate done in ${System.currentTimeMillis() - start}ms")
+
+        // Cold-start from push notification: extract ext data from Intent
+        // and pass it to MainApplication for processing.
+        extractPushExtFromIntent()
+    }
+
+    /**
+     * Extract push notification ext data from the launch Intent.
+     * On cold-start, TIMPush SDK delivers the notification click via Intent
+     * extras, not via the callback mechanism. We need to extract this data
+     * and store it so Flutter can read it after initialization.
+     */
+    private fun extractPushExtFromIntent() {
+        val intent = intent ?: return
+        val extras = intent.extras
+        if (extras == null) {
+            Log.d(TAG, "extractPushExt: no extras in launch intent")
+            return
+        }
+
+        Log.d(TAG, "extractPushExt: intent extras keys=${extras.keySet()}")
+
+        // TIMPush puts the ext data under various keys depending on the channel
+        val extString = extras.getString("ext")
+            ?: extras.getString("TIM_PUSH_EXT")
+            ?: extras.getString("notification_ext")
+            ?: extras.getString("cn.jpush.android.EXTRA")
+
+        Log.d(TAG, "extractPushExt: extString=$extString")
+
+        if (extString != null && extString.isNotEmpty()) {
+            // Store it in MainApplication so Flutter can retrieve it later
+            (application as? MainApplication)?.storeColdStartPushExt(extString)
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        Log.d(TAG, "onNewIntent: received intent, extras=${intent.extras?.keySet()}")
+        // Handle push notification click while app is running (warm-start)
+        extractPushExtFromIntent()
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -57,6 +98,21 @@ class MainActivity : FlutterActivity() {
                 stopIncomingCallAndFinish(result)
             } else if (call.method == "queryCallState") {
                 queryCallState(result)
+            } else {
+                result.notImplemented()
+            }
+        }
+        // Channel for retrieving cold-start push notification ext data
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "com.tianyanzhiyun/cold_start_push"
+        ).setMethodCallHandler { call, result ->
+            if (call.method == "getColdStartPushExt") {
+                val ext = (application as? MainApplication)?.coldStartPushExt
+                Log.d(TAG, "getColdStartPushExt: returning $ext")
+                result.success(ext)
+                // Clear it after retrieval so it's not read again
+                (application as? MainApplication)?.coldStartPushExt = null
             } else {
                 result.notImplemented()
             }

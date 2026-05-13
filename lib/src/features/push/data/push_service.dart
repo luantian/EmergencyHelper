@@ -183,6 +183,9 @@ class PushService {
       await _ensurePushListenerRegistered();
       await _ensureLocalNotificationInitialized();
 
+      // Check for cold-start push notification ext data from Intent extras.
+      await _checkColdStartPushExt();
+
       // Don't call getRegistrationID here 鈥?before IM login it may return
       // the IM userId instead of the real vendor push token.
       _logger.info('push initialized (awaiting IM login for registration)');
@@ -553,6 +556,51 @@ class PushService {
 
   void _onAppWakeUpEvent() {
     _logger.info('push app-wake event received');
+  }
+
+  /// Check for cold-start push notification ext data that was extracted
+  /// from the launch Intent. TIMPush SDK doesn't fire callbacks on cold-start,
+  /// so we read the ext data via a MethodChannel.
+  Future<void> _checkColdStartPushExt() async {
+    try {
+      const channel = MethodChannel('com.tianyanzhiyun/cold_start_push');
+      final ext = await channel.invokeMethod<String>('getColdStartPushExt');
+      if (ext == null || ext.isEmpty) {
+        _logger.info('cold-start: no push ext found in Intent');
+        return;
+      }
+      _logger.info('[PUSH-DIAG] cold-start: found push ext in Intent: $ext');
+
+      Map<String, dynamic> payload;
+      try {
+        payload = jsonDecode(ext) as Map<String, dynamic>;
+      } catch (_) {
+        payload = {'ext': ext};
+      }
+      _logger.info(
+        '[PUSH-DIAG] cold-start decoded payload keys=${payload.keys.toList()}',
+      );
+
+      final openPayload = PushOpenPayload.fromEvent(payload);
+      _logger.info(
+        '[PUSH-DIAG] cold-start PushOpenPayload: routePath=${openPayload.routePath}, eventId=${openPayload.eventId}, page=${openPayload.page}',
+      );
+
+      if (_openPayloadController.hasListener) {
+        _pendingOpenPayload = null;
+        _openPayloadController.add(openPayload);
+      } else {
+        _pendingOpenPayload = openPayload;
+      }
+    } on MissingPluginException {
+      _logger.info('cold-start: MethodChannel not available, skipping');
+    } catch (error, stackTrace) {
+      _logger.error(
+        'cold-start: failed to check push ext',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   Future<void> _ensurePushListenerRegistered() async {

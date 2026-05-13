@@ -10,7 +10,6 @@ import 'package:emergency_helper/src/features/trtc/data/tuicall_session_service.
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
-
 class SplashPage extends StatefulWidget {
   const SplashPage({super.key});
 
@@ -91,18 +90,14 @@ class _SplashPageState extends State<SplashPage> {
       return;
     }
 
-    final hasPushRoute = PendingPushRouteStore.instance.peek() != null;
-    debugPrint('[Splash] _bootstrapSession: hasPushRoute=$hasPushRoute');
-    if (hasPushRoute) {
-      // Cold-start with push notification: _navigateByRoutePath in App widget
-      // already handled or will handle navigation. Don't compete with it —
-      // just continue with warmup in background. TRTC warmup and push alias
-      // binding are now handled at App level, so no need to start them here.
-      debugPrint('[Splash] _bootstrapSession: push route detected, skipping navigation (App widget handles it)');
-    } else {
-      debugPrint('[Splash] _bootstrapSession: no push route, going to /home');
-      context.go(RoutePaths.home);
+    // If _navigateByRoutePath already stored a pending route, it has already
+    // navigated to home and will push the target. Don't go('/home') again —
+    // that would reset the navigation stack and lose the pushed target page.
+    if (PendingPushRouteStore.instance.peek() != null) {
+      return;
     }
+
+    context.go(RoutePaths.home);
   }
 
   Future<void> _cleanupLoggedOutStateInBackground(
